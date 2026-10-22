@@ -88,8 +88,26 @@ setx YANDERE_SIM_PATH "D:\Games\YandereSimulator"
 | `.\inject.ps1` | Search, then patch |
 | `.\inject.ps1 -GamePath <folder>` | Patch this install |
 | `.\inject.ps1 -GamePath <dll>` | Patch this DLL |
+| `.\inject.ps1 -Update` | Download the newest release from GitHub, then patch |
 | `.\inject.ps1 -Restore` | Search, then restore the original |
 | `.\inject.ps1 -Restore -GamePath <folder>` | Restore in this install |
+
+## Updates
+
+Every normal run checks the newest release on GitHub before patching. The
+check takes a moment and stays silent when you are offline. When a newer
+version exists, the same line appears in the console and as a Windows popup
+on the desktop.
+
+To update, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Update
+```
+
+The injector downloads the newest zip, replaces itself, the patcher, and the
+docs next to itself, and patches your game right after.
+`Assembly-CSharp.dll.orig` is not touched by updates.
 
 ## Restore the original DLL
 

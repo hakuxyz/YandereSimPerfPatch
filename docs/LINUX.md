@@ -87,9 +87,28 @@ export YANDERE_SIM_PATH="$HOME/Games/YandereSimulator"
 | `./inject.sh` | Search, then patch |
 | `./inject.sh <folder>` | Patch this install |
 | `./inject.sh <dll path>` | Patch this DLL |
+| `./inject.sh --update` | Download the newest release from GitHub, then patch |
 | `./inject.sh --restore` | Search, then restore the original |
 | `./inject.sh --restore <folder>` | Restore in this install |
 | `./inject.sh --help` | Print the usage text |
+
+## Updates
+
+Every normal run checks the newest release on GitHub before patching. The
+check takes a moment and stays silent when you are offline. When a newer
+version exists, the same line appears on the console and as a desktop
+notification, sent through whichever your desktop provides (`notify-send`,
+`zenity`, or `kdialog`).
+
+To update, run:
+
+```bash
+./inject.sh --update
+```
+
+The injector downloads the newest zip, replaces the injector, the patcher,
+and the docs next to itself, and patches your game right after. Your
+`Assembly-CSharp.dll.orig` backup is not touched by updates.
 
 ## Restore the original DLL
 

@@ -3,20 +3,110 @@
 #
 #   powershell -ExecutionPolicy Bypass -File .\inject.ps1
 #   powershell -ExecutionPolicy Bypass -File .\inject.ps1 -GamePath "D:\YandereSimulator"
+#   powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Update
 #   powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Restore
 
 param(
     [string]$GamePath,
-    [switch]$Restore
+    [switch]$Restore,
+    [switch]$Update
 )
 
 $ErrorActionPreference = "Stop"
+
+$RepoApi = "https://api.github.com/repos/hakuxyz/YandereSimPerfPatch/releases/latest"
+$RepoDownload = "https://github.com/hakuxyz/YandereSimPerfPatch/releases/latest/download"
+$VersionFile = Join-Path $PSScriptRoot "VERSION"
 
 function Write-Note([string]$Text) { Write-Host $Text }
 function Write-Problem([string]$Text) { Write-Host $Text -ForegroundColor Red }
 function Write-Good([string]$Text) { Write-Host $Text -ForegroundColor Green }
 
 $Patcher = Join-Path $PSScriptRoot "YsPerfPatcher.exe"
+
+function Get-LocalVersion {
+    try {
+        if (Test-Path -LiteralPath $VersionFile) {
+            return ((Get-Content -LiteralPath $VersionFile -Raw) -replace "[vV\s]", "")
+        }
+    } catch { }
+    return ""
+}
+
+function Get-LatestVersion {
+    try {
+        $release = Invoke-RestMethod -Uri $RepoApi -TimeoutSec 8
+        if ($release.tag_name) { return ($release.tag_name -replace "^[vV]", "") }
+    } catch { }
+    return ""
+}
+
+function Show-DesktopMessage([string]$Text) {
+    Write-Note $Text
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shell.Popup($Text, 10, "YandereSimPerfPatch", 0x40) | Out-Null
+    } catch { }
+}
+
+# Silent during normal runs, skips everything when GitHub cannot be reached.
+function Test-Update {
+    $current = Get-LocalVersion
+    if (-not $current) { return }
+    $latest = Get-LatestVersion
+    if (-not $latest) { return }
+    if ($current -eq $latest) { return }
+    # Stay quiet when the local copy is ahead of the latest release.
+    try {
+        if ([version]$current -ge [version]$latest) { return }
+    } catch { return }
+    Show-DesktopMessage "Your patch is not up to date (installed: $current, latest: $latest). Run .\inject.ps1 -Update to update."
+}
+
+function Invoke-SelfUpdate {
+    $latest = Get-LatestVersion
+    if (-not $latest) {
+        Write-Problem "Cannot reach GitHub, check your internet connection."
+        exit 1
+    }
+
+    $asset = "YandereSimPerfPatch-win-x64.zip"
+    $url = "$RepoDownload/$asset"
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("yspp_update_" + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+
+    try {
+        Write-Note "Downloading $asset ($latest)..."
+        $zip = Join-Path $tmp $asset
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 300
+
+        $extract = Join-Path $tmp "extracted"
+        Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+        $src = Join-Path $extract "YandereSimPerfPatch"
+        if (-not (Test-Path -LiteralPath $src)) {
+            Write-Problem "Unexpected archive layout."
+            exit 1
+        }
+
+        foreach ($f in @("inject.sh", "inject.ps1", "inject.bat", "YsPerfPatcher.exe", "VERSION", "README.md", "LICENSE")) {
+            $from = Join-Path $src $f
+            if (Test-Path -LiteralPath $from) {
+                Copy-Item -LiteralPath $from -Destination (Join-Path $PSScriptRoot $f) -Force
+            }
+        }
+        $docs = Join-Path $src "docs"
+        if (Test-Path -LiteralPath $docs) {
+            $docsTarget = Join-Path $PSScriptRoot "docs"
+            New-Item -ItemType Directory -Path $docsTarget -Force | Out-Null
+            Copy-Item -Path (Join-Path $docs "*") -Destination $docsTarget -Recurse -Force
+        }
+
+        Write-Good "Updated to $latest."
+    } finally {
+        try { Remove-Item -LiteralPath $tmp -Recurse -Force } catch { }
+    }
+}
 
 # A valid install contains YandereSimulator.exe and the Managed folder.
 function Resolve-Dll([string]$InputPath) {
@@ -118,11 +208,19 @@ function Invoke-Patcher([string]$Dll) {
 
 # ---------------------------------------------------------------------------
 
+if ($Update) {
+    Invoke-SelfUpdate
+}
+
 if (-not (Test-Path -LiteralPath $Patcher)) {
     Write-Problem "Patcher not found next to this script:"
     Write-Problem "  $Patcher"
     Write-Note "Keep inject.ps1 and YsPerfPatcher.exe together in the same folder."
     exit 1
+}
+
+if (-not $Restore) {
+    Test-Update
 }
 
 $dll = Resolve-Dll $GamePath

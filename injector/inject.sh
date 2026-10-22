@@ -5,6 +5,7 @@
 #
 #   ./inject.sh                  search for the game, then patch
 #   ./inject.sh /path/to/game    patch this install directly
+#   ./inject.sh --update         download the latest version from GitHub, then patch
 #   ./inject.sh --restore        put the original DLL back
 #   ./inject.sh --help
 
@@ -13,6 +14,9 @@ set -o pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 patcher="$script_dir/YsPerfPatcher"
+repo_api="https://api.github.com/repos/hakuxyz/YandereSimPerfPatch/releases/latest"
+repo_download="https://github.com/hakuxyz/YandereSimPerfPatch/releases/latest/download"
+version_file="$script_dir/VERSION"
 
 usage() {
     cat <<'EOF'
@@ -20,8 +24,12 @@ Yandere Simulator Performance Patch for Linux
 
   ./inject.sh                  search for the game, then patch it
   ./inject.sh /path/to/game    patch the given game folder
+  ./inject.sh --update         fetch the newest version from GitHub, then patch
   ./inject.sh --restore        restore the original Assembly-CSharp.dll
   ./inject.sh --help           show this text
+
+Every normal run also checks GitHub for a newer version and shows a desktop
+notification when one is available. The check is skipped when you are offline.
 
 The game folder is the one that contains YandereSimulator.exe.
 You can also point at the DLL directly:
@@ -37,6 +45,82 @@ EOF
 fail() {
     printf '%s\n' "error: $*" >&2
     exit 1
+}
+
+local_version() {
+    if [ -f "$version_file" ]; then
+        tr -d 'vV \r\n' < "$version_file"
+    fi
+}
+
+latest_version() {
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsSL --max-time 8 "$repo_api" 2>/dev/null |
+        sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 | tr -d 'vV '
+}
+
+show_desktop_message() {
+    local text="$1"
+    printf '%s\n' "$text"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "YandereSimPerfPatch" "Yandere Simulator patch" "$text" \
+            >/dev/null 2>&1 || true
+    elif command -v zenity >/dev/null 2>&1; then
+        zenity --notification --text="$text" >/dev/null 2>&1 || true
+    elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Yandere Simulator patch" --passivepopup "$text" 10 \
+            >/dev/null 2>&1 || true
+    fi
+}
+
+# Silent during normal runs, skips everything when GitHub cannot be reached.
+check_for_update() {
+    local current latest
+    current=$(local_version)
+    [ -n "$current" ] || return 0
+    latest=$(latest_version) || return 0
+    [ -n "$latest" ] || return 0
+    [ "$current" = "$latest" ] && return 0
+    # Stay quiet when the local copy is ahead of the latest release.
+    [ "$(printf '%s\n' "$current" "$latest" | sort -V | head -n 1)" != "$current" ] && return 0
+    show_desktop_message "Your patch is not up to date (installed: $current, latest: $latest). Run ./inject.sh --update to update."
+}
+
+do_update() {
+    local latest tmp asset url src f
+    command -v curl >/dev/null 2>&1 || fail "curl is required for updates"
+    latest=$(latest_version) || fail "cannot reach GitHub, check your internet connection"
+    [ -n "$latest" ] || fail "no release found on GitHub"
+
+    asset="YandereSimPerfPatch-linux-x64.zip"
+    url="$repo_download/$asset"
+    tmp=$(mktemp -d) || fail "cannot create a temporary folder"
+    trap 'rm -rf "$tmp"' EXIT
+
+    printf '%s\n' "Downloading $asset ($latest)..."
+    curl -fL --max-time 300 -o "$tmp/$asset" "$url" ||
+        fail "download failed, check your internet connection"
+
+    command -v unzip >/dev/null 2>&1 || fail "unzip is required to extract the update"
+    unzip -oq "$tmp/$asset" -d "$tmp/extracted" || fail "could not extract the update"
+
+    src="$tmp/extracted/YandereSimPerfPatch"
+    [ -d "$src" ] || fail "unexpected archive layout"
+
+    for f in inject.sh inject.ps1 inject.bat YsPerfPatcher VERSION README.md LICENSE; do
+        if [ -e "$src/$f" ]; then
+            cp -f "$src/$f" "$script_dir/$f" 2>/dev/null || true
+        fi
+    done
+    if [ -d "$src/docs" ]; then
+        mkdir -p "$script_dir/docs"
+        cp -rf "$src/docs/." "$script_dir/docs/" 2>/dev/null || true
+    fi
+    chmod +x "$script_dir/inject.sh" "$script_dir/YsPerfPatcher" 2>/dev/null || true
+
+    trap - EXIT
+    rm -rf "$tmp"
+    printf '%s\n' "Updated to $latest."
 }
 
 # Accepts a folder or the DLL path, prints the DLL path if it is valid.
@@ -132,10 +216,16 @@ case "${1:-}" in
         do_restore "$dll"
         exit 0
         ;;
+    --update)
+        do_update
+        shift
+        ;;
 esac
 
 [ -f "$patcher" ] || fail "patcher not found next to this script: $patcher"
 [ -x "$patcher" ] || fail "patcher is not executable, run: chmod +x '$patcher'"
+
+check_for_update
 
 target=""
 if [ $# -ge 1 ]; then

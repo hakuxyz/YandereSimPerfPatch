@@ -14,6 +14,17 @@ Both binaries are self contained, so no .NET installation is required. The
 patcher itself only rewrites the DLL and can be used on Windows and on Linux.
 The game then runs the way it always did, either natively or through Wine.
 
+## Before you start
+
+You do not need any programming knowledge for this. Download the zip for your
+system, extract it, run one file, done. The whole thing is open source, the
+full code lives in this repository and everyone can read it, change it, and
+check what it does to the game. It changes nothing online, there is no account
+and no telemetry.
+
+If something does not work, ask in the Discord or watch the video guide,
+both links are at the bottom of this page.
+
 ## What the patch changes
 
 | # | Change | Why it helps |
@@ -103,6 +114,23 @@ Both take an optional folder argument when the search would find nothing. The
 backup `Assembly-CSharp.dll.orig` sits next to the DLL and is created on the
 first patch run.
 
+## Updates
+
+Every normal run of the injector checks GitHub for a newer version. When one
+is available, a desktop notification tells you and the console shows the same
+line. To update, run the injector with the update switch:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Update
+```
+
+```bash
+./inject.sh --update
+```
+
+It downloads the newest release, replaces itself and the patcher with it, and
+patches your game right after. The check stays quiet when you are offline.
+
 ## After a game update
 
 YandereDev replaces `Assembly-CSharp.dll` with every release, and the backup
@@ -155,6 +183,14 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 The injector scripts live in `injector/` and expect the patcher binary next to
 them.
+
+## Getting help
+
+The Discord server is the fastest place to get help, also for complete
+beginners: https://discord.gg/Qf5cgQK3Y2
+
+There is a video guide on YouTube that shows every click:
+https://www.youtube.com/@xyzhakuu
 
 ## Documentation
 
