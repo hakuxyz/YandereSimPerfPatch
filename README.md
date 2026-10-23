@@ -39,7 +39,7 @@ both links are at the bottom of this page.
 | 8 | The first run of the game sets draw distance to 200 instead of 350 | Less geometry to render each frame, the setting stays adjustable up to 350 |
 | 9 | Bloom and ambient occlusion settings from the options screen are applied on level start | The original never reloaded the post processing profile, so the options silently did nothing in some scenes |
 | 10 | Discord Rich Presence now sends a session start time | The Discord profile shows a running playtime timer |
-| 11 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and the title bar confirms with Low Spec Preset Applied |
+| 11 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and a notification at the top of the screen confirms with Low Spec Preset Applied |
 
 Groups 1 through 6 only write their value when the corresponding setting does
 not exist yet, so an existing profile is never overwritten. Everything else
@@ -142,9 +142,9 @@ the file, which is the moment to stop and report it.
 
 First time players get the defaults from groups 3 through 8 automatically.
 Existing profiles do not need to set anything by hand: press F10 on the main
-menu once, the title bar confirms with Low Spec Preset Applied, and the table
-below shows what changes. Every value stays adjustable in the options screen
-afterwards:
+menu once, a notification at the top of the screen confirms with Low Spec
+Preset Applied, and the table below shows what changes. Every value stays
+adjustable in the options screen afterwards:
 
 | Setting | Value |
 |---------|-------|

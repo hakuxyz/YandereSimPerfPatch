@@ -544,19 +544,63 @@ sealed class Patcher
         }
 
         // refs not used in this method: scan the whole module (same trick as PlayerPrefs.Save)
+        MethodReference? getTimeDelta = null, objFind = null, getText = null;
         foreach (var tt in _module.Types)
         foreach (var mm in tt.Methods)
         {
             if (!mm.HasBody) continue;
             foreach (var ii in mm.Body.Instructions)
             {
-                if (ii.OpCode != OpCodes.Call && ii.OpCode != OpCodes.Callvirt) continue;
                 if (ii.Operand is not MethodReference mr) continue;
+                if (ii.OpCode != OpCodes.Call && ii.OpCode != OpCodes.Callvirt) continue;
                 if (save == null && mr.FullName == "System.Void UnityEngine.PlayerPrefs::Save()") save = mr;
                 else if (setText == null && mr.Name == "set_text" && mr.Parameters.Count == 1
                     && mr.Parameters[0].ParameterType.FullName == "System.String"
                     && mr.DeclaringType.Name == "UILabel") setText = mr;
+                else if (getText == null && mr.Name == "get_text" && mr.Parameters.Count == 0
+                    && mr.ReturnType.FullName == "System.String"
+                    && mr.DeclaringType.Name == "UILabel") getText = mr;
+                else if (getTimeDelta == null && mr.FullName == "System.Single UnityEngine.Time::get_deltaTime()") getTimeDelta = mr;
+                else if (objFind == null && mr.FullName == "UnityEngine.GameObject UnityEngine.GameObject::Find(System.String)") objFind = mr;
             }
+        }
+
+        // non-generic GetComponent(string) + castclass: hand-built GenericInstanceMethod
+        // serializes a broken MethodSpec token (InvalidProgramException), avoid generics entirely
+        MethodReference? getComponentStr = null;
+        TypeReference? componentTypeRef = _module.GetTypeReferences()
+            .FirstOrDefault(x => x.FullName == "UnityEngine.Component");
+        if (componentTypeRef == null && objFind != null)
+        {
+            foreach (var tt in _module.Types)
+            {
+                foreach (var mm in tt.Methods)
+                {
+                    if (!mm.HasBody) continue;
+                    foreach (var ii in mm.Body.Instructions)
+                    {
+                        if (ii.Operand is MethodReference mr2 && mr2.ReturnType.FullName == "UnityEngine.Component"
+                            && mr2.Name.StartsWith("get_"))
+                        {
+                            componentTypeRef = mr2.ReturnType;
+                            break;
+                        }
+                    }
+                    if (componentTypeRef != null) break;
+                }
+                if (componentTypeRef != null) break;
+            }
+        }
+        if (componentTypeRef != null && objFind != null)
+        {
+            getComponentStr = new MethodReference("GetComponent", componentTypeRef, objFind.DeclaringType)
+            {
+                HasThis = true,
+                ExplicitThis = false,
+                CallingConvention = MethodCallingConvention.Default,
+            };
+            getComponentStr.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
+            getComponentStr = _module.ImportReference(getComponentStr);
         }
 
         var pbField = t.Fields.FirstOrDefault(f => f.Name == "PromptBar" && f.FieldType.Name == "PromptBarScript");
@@ -571,6 +615,10 @@ sealed class Patcher
         if (setInt == null) missing.Add("SetInt");
         if (save == null) missing.Add("Save");
         if (setText == null) missing.Add("UILabel.set_text");
+        if (getText == null) missing.Add("UILabel.get_text");
+        if (getTimeDelta == null) missing.Add("Time.get_deltaTime");
+        if (objFind == null) missing.Add("GameObject.Find");
+        if (getComponentStr == null) missing.Add("GameObject.GetComponent(string)");
         if (pbField == null) missing.Add("NewTitleScreenScript.PromptBar");
         if (mClear == null) missing.Add("PromptBarScript.ClearButtons");
         if (mUpdate == null) missing.Add("PromptBarScript.UpdateButtons");
@@ -578,6 +626,15 @@ sealed class Patcher
         if (fShow == null) missing.Add("PromptBarScript.Show");
         if (missing.Count > 0)
             throw new Exception("member refs not found: " + string.Join(", ", missing));
+
+        // static state for the top notification (timer + cached label + original text)
+        var lblTypeRef = ((TypeReference)setText.DeclaringType);
+        var fNotifTimer = new FieldDefinition("F10NotifTimer", FieldAttributes.Static | FieldAttributes.Private, _module.TypeSystem.Single);
+        var fNotifOrig = new FieldDefinition("F10NotifOriginal", FieldAttributes.Static | FieldAttributes.Private, _module.TypeSystem.String);
+        var fNotifLabel = new FieldDefinition("F10NotifLabel", FieldAttributes.Static | FieldAttributes.Private, lblTypeRef);
+        t.Fields.Add(fNotifTimer);
+        t.Fields.Add(fNotifOrig);
+        t.Fields.Add(fNotifLabel);
 
         // vanilla OptionGlobals getters build every option key as "Profile_0_<name>"
         // (ldc.i4.0 in Assembly-CSharp.dll.orig): options are global, not per save
@@ -608,8 +665,50 @@ sealed class Patcher
         var il = body.GetILProcessor();
         var orig = body.Instructions[0];
 
+        // branch targets for the every-frame timer countdown
+        var lblDecrement = Instruction.Create(OpCodes.Nop);
+        var lblContinue = Instruction.Create(OpCodes.Nop);
+
         var seq = new List<Instruction>
         {
+            // --- every frame: notification timer countdown + restore ---
+            // if (F10NotifTimer > 0f) { ... }
+            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Ldc_R4, 0f),
+            Instruction.Create(OpCodes.Bgt_Un, lblDecrement),
+            Instruction.Create(OpCodes.Br, lblContinue),
+
+            // F10NotifTimer -= Time.deltaTime
+            lblDecrement,
+            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Call, getTimeDelta),
+            Instruction.Create(OpCodes.Sub),
+            Instruction.Create(OpCodes.Stsfld, fNotifTimer),
+
+            // if (F10NotifTimer <= 0f) { restore }
+            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Ldc_R4, 0f),
+            Instruction.Create(OpCodes.Bgt, lblContinue),
+            Instruction.Create(OpCodes.Ldc_R4, 0f),
+            Instruction.Create(OpCodes.Stsfld, fNotifTimer),
+
+            // if (F10NotifLabel != null && F10NotifOriginal != null)
+            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
+            Instruction.Create(OpCodes.Brfalse, lblContinue),
+            Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
+            Instruction.Create(OpCodes.Brfalse, lblContinue),
+
+            // F10NotifLabel.text = F10NotifOriginal
+            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
+            Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
+            Instruction.Create(OpCodes.Callvirt, setText),
+            // F10NotifOriginal = null
+            Instruction.Create(OpCodes.Ldnull),
+            Instruction.Create(OpCodes.Stsfld, fNotifOrig),
+
+            lblContinue,
+
+            // --- F10 key check ---
             Instruction.Create(OpCodes.Ldstr, "f10"),
             Instruction.Create(OpCodes.Call, getKey),
             Instruction.Create(OpCodes.Brfalse, orig),
@@ -622,6 +721,42 @@ sealed class Patcher
         }
         seq.Add(Instruction.Create(OpCodes.Call, save));
 
+        // Top notification via "Bug Warning Label" (top-center UILabel, scene-serialized)
+        var lblHaveLabel = Instruction.Create(OpCodes.Nop);
+        var lblSkipOrig = Instruction.Create(OpCodes.Nop);
+        var lblFallback = Instruction.Create(OpCodes.Nop);
+
+        // if (F10NotifLabel == null) { find + cache }
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Brtrue, lblHaveLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldstr, "Bug Warning Label"));
+        seq.Add(Instruction.Create(OpCodes.Call, objFind));
+        seq.Add(Instruction.Create(OpCodes.Brfalse, lblFallback));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, getComponentStr));
+        seq.Add(Instruction.Create(OpCodes.Castclass, lblTypeRef));
+        seq.Add(Instruction.Create(OpCodes.Brfalse, lblFallback));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifLabel));
+
+        // if (F10NotifOriginal == null) F10NotifOriginal = F10NotifLabel.text;
+        seq.Add(lblHaveLabel);
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifOrig));
+        seq.Add(Instruction.Create(OpCodes.Brtrue, lblSkipOrig));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, getText));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifOrig));
+        seq.Add(lblSkipOrig);
+
+        // F10NotifLabel.text = "Low Spec Preset Applied!";
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldstr, "Low Spec Preset Applied!"));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, setText));
+        // F10NotifTimer = 4f
+        seq.Add(Instruction.Create(OpCodes.Ldc_R4, 4f));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifTimer));
+        seq.Add(Instruction.Create(OpCodes.Br, orig));
+
+        // Fallback: bottom PromptBar if the top label could not be found
+        seq.Add(lblFallback);
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
         seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
         seq.Add(Instruction.Create(OpCodes.Brfalse, orig));
@@ -644,9 +779,9 @@ sealed class Patcher
         seq.Add(Instruction.Create(OpCodes.Stfld, fShow));
 
         foreach (var i in seq) il.InsertBefore(orig, i);
-        if (body.MaxStackSize < 4) body.MaxStackSize = 4;
+        if (body.MaxStackSize < 8) body.MaxStackSize = 8;
 
-        _applied.Add("NewTitleScreenScript.Update F10 writes low spec preset to Profile_0_* (global options) + prompt bar feedback");
+        _applied.Add("NewTitleScreenScript.Update F10 writes low spec preset to Profile_0_* (global options) + top notification");
         return true;
     }
 
