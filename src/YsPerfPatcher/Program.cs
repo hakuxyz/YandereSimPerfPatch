@@ -7,8 +7,8 @@ using Mono.Cecil.Cil;
 
 static class Program
 {
-    const float NearM = 30f;
-    const float FarM = 70f;
+    const float NearM = 10f;
+    const float FarM = 40f;
 
     static int Main(string[] args)
     {
@@ -41,8 +41,8 @@ static class Program
 
 sealed class Patcher
 {
-    const float NearM = 30f;
-    const float FarM = 70f;
+    const float NearM = 10f;
+    const float FarM = 40f;
 
     readonly string _path;
     readonly string _dir;
