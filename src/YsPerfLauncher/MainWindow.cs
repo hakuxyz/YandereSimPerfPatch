@@ -87,7 +87,9 @@ public class MainWindow : Window
 
         var root = new DockPanel { Margin = new Thickness(16) };
 
-        root.Children.Add(BuildHeader());
+        var header = BuildHeader();
+        DockPanel.SetDock(header, Dock.Top);
+        root.Children.Add(header);
         DockPanel.SetDock(_progress, Dock.Bottom);
         root.Children.Add(_progress);
 
