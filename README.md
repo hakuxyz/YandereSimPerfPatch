@@ -198,7 +198,6 @@ https://www.youtube.com/@xyzhakuu
 |------|---------|
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows install, detection, restore, troubleshooting |
 | [docs/LINUX.md](docs/LINUX.md) | Linux install, Wine and Discord notes, troubleshooting |
-| [docs/ANLEITUNG.de.md](docs/ANLEITUNG.de.md) | German writeup of every patch group with the full settings table |
 
 ## License
 
