@@ -23,7 +23,7 @@ disk and nothing else.
 
 ```
 Found game DLL: C:\Users\you\Downloads\YandereSimulator\YandereSimulator_Data\Managed\Assembly-CSharp.dll
-Summary: 13/13 patch groups applied.
+Summary: 11/11 patch groups applied.
 Patched: C:\...\Assembly-CSharp.dll
 ```
 

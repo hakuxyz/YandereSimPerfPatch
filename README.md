@@ -6,7 +6,7 @@ rate on weaker hardware. No content is removed, no gameplay logic is rewritten,
 and saves keep working.
 
 The injector finds your game folder, backs up the original file as
-`Assembly-CSharp.dll.orig`, and applies thirteen independent patch groups.
+`Assembly-CSharp.dll.orig`, and applies eleven independent patch groups.
 Running it a second time changes nothing, and the restore switch puts the
 original file back at any time.
 
@@ -29,21 +29,19 @@ both links are at the bottom of this page.
 
 | # | Change | Why it helps |
 |---|--------|--------------|
-| 1 | Students beyond 30 meters refresh every second frame, beyond 70 meters every third frame | A full school with 80 students is mostly CPU cost, and far away students do not need every frame |
-| 2 | The same distance rule for animation weights in LateUpdate | Keeps animation sampling in step with the throttled updates |
-| 3 | First launch defaults to VSync on | Avoids screen tearing without extra work |
-| 4 | First launch defaults to bloom off | Removes a full screen shader pass |
-| 5 | First launch defaults to ambient occlusion off | Removes a second full screen pass |
-| 6 | First launch defaults to a 60 FPS limit | Uncapped frame rates stutter on older GPUs |
-| 7 | First launch defaults to particle count low | Fewer particles during rain, dust, and crowd scenes |
-| 8 | First launch defaults to low detail students at 20 meters | Distant students use the simple model |
-| 9 | Soft shadows become hard shadows everywhere | Roughly half the shadow shader cost, only matters when shadows are on (they start off) |
-| 10 | The first run of the game sets draw distance to 200 instead of 350 | Less geometry to render each frame, the setting stays adjustable up to 350 |
-| 11 | Bloom and ambient occlusion settings from the options screen are applied on level start | The original never reloaded the post processing profile, so the options silently did nothing in some scenes |
-| 12 | Discord Rich Presence now sends a session start time | The Discord profile shows a running playtime timer |
-| 13 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and the title bar confirms with Low Spec Preset Applied |
+| 1 | First launch defaults to VSync on | Avoids screen tearing without extra work |
+| 2 | First launch defaults to bloom off | Removes a full screen shader pass |
+| 3 | First launch defaults to ambient occlusion off | Removes a second full screen pass |
+| 4 | First launch defaults to a 60 FPS limit | Uncapped frame rates stutter on older GPUs |
+| 5 | First launch defaults to particle count low | Fewer particles during rain, dust, and crowd scenes |
+| 6 | First launch defaults to low detail students at 20 meters | Distant students use the simple model |
+| 7 | Soft shadows become hard shadows everywhere | Roughly half the shadow shader cost, only matters when shadows are on (they start off) |
+| 8 | The first run of the game sets draw distance to 200 instead of 350 | Less geometry to render each frame, the setting stays adjustable up to 350 |
+| 9 | Bloom and ambient occlusion settings from the options screen are applied on level start | The original never reloaded the post processing profile, so the options silently did nothing in some scenes |
+| 10 | Discord Rich Presence now sends a session start time | The Discord profile shows a running playtime timer |
+| 11 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and the title bar confirms with Low Spec Preset Applied |
 
-Groups 3 through 8 only write their value when the corresponding setting does
+Groups 1 through 6 only write their value when the corresponding setting does
 not exist yet, so an existing profile is never overwritten. Everything else
 checks its own marker and skips when the DLL was already patched.
 

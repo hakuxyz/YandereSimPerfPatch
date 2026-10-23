@@ -7,9 +7,6 @@ using Mono.Cecil.Cil;
 
 static class Program
 {
-    const float NearM = 10f;
-    const float FarM = 40f;
-
     static int Main(string[] args)
     {
         if (args.Length < 1)
@@ -41,9 +38,6 @@ static class Program
 
 sealed class Patcher
 {
-    const float NearM = 10f;
-    const float FarM = 40f;
-
     readonly string _path;
     readonly string _dir;
     readonly byte[] _bytes;
@@ -76,11 +70,7 @@ sealed class Patcher
 
     public int Run()
     {
-        var student = RequireType("StudentScript");
         var qm = RequireType("QualityManagerScript");
-
-        bool t1a = PatchUpdateThrottle(student);
-        bool t1b = PatchLateUpdateThrottle(student);
 
         int t2 = 0;
         foreach (var (prop, val) in GetterDefaults())
@@ -97,7 +87,7 @@ sealed class Patcher
         foreach (var l in _skipped) Console.WriteLine($"  [already] {l}");
 
         int appliedCount = _applied.Count;
-        int expected = 2 + GetterDefaults().Length + 5; // throttle(2) + getters(6) + shadows + drawdist + profile + timestamps + F10 key
+        int expected = GetterDefaults().Length + 5; // getters(6) + shadows + drawdist + profile + timestamps + F10 key
 
         if (appliedCount == 0)
         {
@@ -144,139 +134,6 @@ sealed class Patcher
             && (paramCount < 0 || x.Parameters.Count == paramCount));
         if (m == null) throw new Exception($"UnityEngine.{type}.{method} not found");
         return _module.ImportReference(m);
-    }
-
-    // ---------- patch 1a: StudentScript.Update ----------
-
-    bool PatchUpdateThrottle(TypeDefinition student)
-    {
-        var m = student.Methods.FirstOrDefault(x => x.Name == "Update" && x.Parameters.Count == 0);
-        if (m == null) throw new Exception("StudentScript.Update not found");
-        if (HasMarker(m, "get_frameCount")) { _skipped.Add("StudentScript.Update throttle"); return false; }
-
-        var idField = student.Fields.FirstOrDefault(f => f.Name == "StudentID" && f.FieldType.FullName == "System.Int32")
-            ?? throw new Exception("StudentScript.StudentID not found");
-        var yandereField = student.Fields.FirstOrDefault(f => f.Name == "Yandere")
-            ?? throw new Exception("StudentScript.Yandere not found");
-
-        var getTransform = CoreMethod("Component", "get_transform", 0);
-        var getPosition = CoreMethod("Transform", "get_position", 0);
-        var distance = CoreMethod("Vector3", "Distance", 2);
-        var frameCount = CoreMethod("Time", "get_frameCount", 0);
-
-        var body = m.Body;
-        var il = body.GetILProcessor();
-        var orig = body.Instructions[0];
-
-        var locD = new VariableDefinition(_module.TypeSystem.Single);
-        var locStride = new VariableDefinition(_module.TypeSystem.Int32);
-        body.Variables.Add(locD);
-        body.Variables.Add(locStride);
-
-        var tTwo = Instruction.Create(OpCodes.Ldc_I4_2);
-        var tSt = Instruction.Create(OpCodes.Stloc, locStride);
-
-        var seq = new[]
-        {
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Callvirt, getTransform),
-            Instruction.Create(OpCodes.Callvirt, getPosition),
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Ldfld, yandereField),
-            Instruction.Create(OpCodes.Callvirt, getTransform),
-            Instruction.Create(OpCodes.Callvirt, getPosition),
-            Instruction.Create(OpCodes.Call, distance),
-            Instruction.Create(OpCodes.Stloc, locD),
-
-            Instruction.Create(OpCodes.Ldloc, locD),
-            Instruction.Create(OpCodes.Ldc_R4, NearM),
-            Instruction.Create(OpCodes.Blt, orig),
-
-            Instruction.Create(OpCodes.Ldloc, locD),
-            Instruction.Create(OpCodes.Ldc_R4, FarM),
-            Instruction.Create(OpCodes.Blt, tTwo),
-
-            Instruction.Create(OpCodes.Ldc_I4_3),
-            Instruction.Create(OpCodes.Br, tSt),
-
-            tTwo,
-            tSt,
-
-            Instruction.Create(OpCodes.Call, frameCount),
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Ldfld, idField),
-            Instruction.Create(OpCodes.Add),
-            Instruction.Create(OpCodes.Ldloc, locStride),
-            Instruction.Create(OpCodes.Rem),
-            Instruction.Create(OpCodes.Brfalse, orig),
-            Instruction.Create(OpCodes.Ret),
-        };
-
-        foreach (var i in seq) il.InsertBefore(orig, i);
-        if (body.MaxStackSize < 8) body.MaxStackSize = 8;
-
-        _applied.Add($"StudentScript.Update throttle (>= {NearM}m every 2nd frame, >= {FarM}m every 3rd)");
-        return true;
-    }
-
-    // ---------- patch 1b: StudentScript.LateUpdate ----------
-
-    bool PatchLateUpdateThrottle(TypeDefinition student)
-    {
-        var m = student.Methods.FirstOrDefault(x => x.Name == "LateUpdate");
-        if (m == null) throw new Exception("StudentScript.LateUpdate not found");
-        if (HasMarker(m, "get_frameCount")) { _skipped.Add("StudentScript.LateUpdate throttle"); return false; }
-
-        var idField = student.Fields.FirstOrDefault(f => f.Name == "StudentID" && f.FieldType.FullName == "System.Int32")
-            ?? throw new Exception("StudentScript.StudentID not found");
-        var distField = student.Fields.FirstOrDefault(f => f.Name == "DistanceToPlayer")
-            ?? throw new Exception("StudentScript.DistanceToPlayer not found");
-
-        var frameCount = CoreMethod("Time", "get_frameCount", 0);
-
-        var body = m.Body;
-        var il = body.GetILProcessor();
-        var orig = body.Instructions[0];
-
-        var locStride = new VariableDefinition(_module.TypeSystem.Int32);
-        body.Variables.Add(locStride);
-
-        var tTwo = Instruction.Create(OpCodes.Ldc_I4_2);
-        var tSt = Instruction.Create(OpCodes.Stloc, locStride);
-
-        var seq = new[]
-        {
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Ldfld, distField),
-            Instruction.Create(OpCodes.Ldc_R4, NearM),
-            Instruction.Create(OpCodes.Blt, orig),
-
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Ldfld, distField),
-            Instruction.Create(OpCodes.Ldc_R4, FarM),
-            Instruction.Create(OpCodes.Blt, tTwo),
-
-            Instruction.Create(OpCodes.Ldc_I4_3),
-            Instruction.Create(OpCodes.Br, tSt),
-
-            tTwo,
-            tSt,
-
-            Instruction.Create(OpCodes.Call, frameCount),
-            Instruction.Create(OpCodes.Ldarg_0),
-            Instruction.Create(OpCodes.Ldfld, idField),
-            Instruction.Create(OpCodes.Add),
-            Instruction.Create(OpCodes.Ldloc, locStride),
-            Instruction.Create(OpCodes.Rem),
-            Instruction.Create(OpCodes.Brfalse, orig),
-            Instruction.Create(OpCodes.Ret),
-        };
-
-        foreach (var i in seq) il.InsertBefore(orig, i);
-        if (body.MaxStackSize < 8) body.MaxStackSize = 8;
-
-        _applied.Add("StudentScript.LateUpdate throttle (staggered)");
-        return true;
     }
 
     // ---------- patch 2: OptionGlobals first-run defaults ----------
