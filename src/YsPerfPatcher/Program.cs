@@ -544,7 +544,9 @@ sealed class Patcher
         }
 
         // refs not used in this method: scan the whole module (same trick as PlayerPrefs.Save)
-        MethodReference? getTimeDelta = null, objFind = null, getText = null;
+        // steal existing MethodReferences: hand-building one produces a broken MemberRef token
+        MethodReference? getTimeDelta = null, getText = null, debugLog = null;
+        MethodReference? getGameObject = null, getActiveSelf = null, objInequality = null, setAct = null;
         foreach (var tt in _module.Types)
         foreach (var mm in tt.Methods)
         {
@@ -561,48 +563,25 @@ sealed class Patcher
                     && mr.ReturnType.FullName == "System.String"
                     && mr.DeclaringType.Name == "UILabel") getText = mr;
                 else if (getTimeDelta == null && mr.FullName == "System.Single UnityEngine.Time::get_deltaTime()") getTimeDelta = mr;
-                else if (objFind == null && mr.FullName == "UnityEngine.GameObject UnityEngine.GameObject::Find(System.String)") objFind = mr;
+                else if (debugLog == null && mr.FullName == "System.Void UnityEngine.Debug::Log(System.Object)") debugLog = mr;
+                else if (getGameObject == null && mr.Name == "get_gameObject" && mr.HasThis
+                    && mr.Parameters.Count == 0 && mr.ReturnType.FullName == "UnityEngine.GameObject"
+                    && mr.DeclaringType.FullName == "UnityEngine.Component")
+                    getGameObject = mr;
+                else if (getActiveSelf == null && mr.FullName == "System.Boolean UnityEngine.GameObject::get_activeSelf()")
+                    getActiveSelf = mr;
+                else if (setAct == null && mr.FullName == "System.Void UnityEngine.GameObject::SetActive(System.Boolean)")
+                    setAct = mr;
+                else if (objInequality == null && mr.Name == "op_Inequality" && mr.Parameters.Count == 2
+                    && mr.Parameters[0].ParameterType.FullName == "UnityEngine.Object"
+                    && mr.Parameters[1].ParameterType.FullName == "UnityEngine.Object"
+                    && mr.ReturnType.FullName == "System.Boolean"
+                    && mr.DeclaringType.FullName == "UnityEngine.Object")
+                    objInequality = mr;
             }
         }
 
-        // non-generic GetComponent(string) + castclass: hand-built GenericInstanceMethod
-        // serializes a broken MethodSpec token (InvalidProgramException), avoid generics entirely
-        MethodReference? getComponentStr = null;
-        TypeReference? componentTypeRef = _module.GetTypeReferences()
-            .FirstOrDefault(x => x.FullName == "UnityEngine.Component");
-        if (componentTypeRef == null && objFind != null)
-        {
-            foreach (var tt in _module.Types)
-            {
-                foreach (var mm in tt.Methods)
-                {
-                    if (!mm.HasBody) continue;
-                    foreach (var ii in mm.Body.Instructions)
-                    {
-                        if (ii.Operand is MethodReference mr2 && mr2.ReturnType.FullName == "UnityEngine.Component"
-                            && mr2.Name.StartsWith("get_"))
-                        {
-                            componentTypeRef = mr2.ReturnType;
-                            break;
-                        }
-                    }
-                    if (componentTypeRef != null) break;
-                }
-                if (componentTypeRef != null) break;
-            }
-        }
-        if (componentTypeRef != null && objFind != null)
-        {
-            getComponentStr = new MethodReference("GetComponent", componentTypeRef, objFind.DeclaringType)
-            {
-                HasThis = true,
-                ExplicitThis = false,
-                CallingConvention = MethodCallingConvention.Default,
-            };
-            getComponentStr.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
-            getComponentStr = _module.ImportReference(getComponentStr);
-        }
-
+        var dbgLogField = t.Fields.FirstOrDefault(f => f.Name == "DebugLog" && f.FieldType.Name == "UILabel");
         var pbField = t.Fields.FirstOrDefault(f => f.Name == "PromptBar" && f.FieldType.Name == "PromptBarScript");
         var pbType = pbField?.FieldType.Resolve();
         var mClear = pbType?.Methods.FirstOrDefault(x => x.Name == "ClearButtons");
@@ -617,8 +596,12 @@ sealed class Patcher
         if (setText == null) missing.Add("UILabel.set_text");
         if (getText == null) missing.Add("UILabel.get_text");
         if (getTimeDelta == null) missing.Add("Time.get_deltaTime");
-        if (objFind == null) missing.Add("GameObject.Find");
-        if (getComponentStr == null) missing.Add("GameObject.GetComponent(string)");
+        if (debugLog == null) missing.Add("Debug.Log");
+        if (getGameObject == null) missing.Add("Component.get_gameObject");
+        if (getActiveSelf == null) missing.Add("GameObject.get_activeSelf");
+        if (setAct == null) missing.Add("GameObject.SetActive");
+        if (objInequality == null) missing.Add("Object.op_Inequality");
+        if (dbgLogField == null) missing.Add("NewTitleScreenScript.DebugLog");
         if (pbField == null) missing.Add("NewTitleScreenScript.PromptBar");
         if (mClear == null) missing.Add("PromptBarScript.ClearButtons");
         if (mUpdate == null) missing.Add("PromptBarScript.UpdateButtons");
@@ -632,9 +615,11 @@ sealed class Patcher
         var fNotifTimer = new FieldDefinition("F10NotifTimer", FieldAttributes.Static | FieldAttributes.Private, _module.TypeSystem.Single);
         var fNotifOrig = new FieldDefinition("F10NotifOriginal", FieldAttributes.Static | FieldAttributes.Private, _module.TypeSystem.String);
         var fNotifLabel = new FieldDefinition("F10NotifLabel", FieldAttributes.Static | FieldAttributes.Private, lblTypeRef);
+        var fNotifWasActive = new FieldDefinition("F10NotifWasActive", FieldAttributes.Static | FieldAttributes.Private, _module.TypeSystem.Boolean);
         t.Fields.Add(fNotifTimer);
         t.Fields.Add(fNotifOrig);
         t.Fields.Add(fNotifLabel);
+        t.Fields.Add(fNotifWasActive);
 
         // vanilla OptionGlobals getters build every option key as "Profile_0_<name>"
         // (ldc.i4.0 in Assembly-CSharp.dll.orig): options are global, not per save
@@ -693,7 +678,10 @@ sealed class Patcher
             Instruction.Create(OpCodes.Stsfld, fNotifTimer),
 
             // if (F10NotifLabel != null && F10NotifOriginal != null)
+            // (Unity-aware: destroyed objects must compare == null)
             Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
+            Instruction.Create(OpCodes.Ldnull),
+            Instruction.Create(OpCodes.Call, objInequality),
             Instruction.Create(OpCodes.Brfalse, lblContinue),
             Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
             Instruction.Create(OpCodes.Brfalse, lblContinue),
@@ -702,6 +690,11 @@ sealed class Patcher
             Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
             Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
             Instruction.Create(OpCodes.Callvirt, setText),
+            // F10NotifLabel.gameObject.SetActive(F10NotifWasActive)
+            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
+            Instruction.Create(OpCodes.Callvirt, getGameObject),
+            Instruction.Create(OpCodes.Ldsfld, fNotifWasActive),
+            Instruction.Create(OpCodes.Callvirt, setAct),
             // F10NotifOriginal = null
             Instruction.Create(OpCodes.Ldnull),
             Instruction.Create(OpCodes.Stsfld, fNotifOrig),
@@ -721,30 +714,52 @@ sealed class Patcher
         }
         seq.Add(Instruction.Create(OpCodes.Call, save));
 
-        // Top notification via "Bug Warning Label" (top-center UILabel, scene-serialized)
-        var lblHaveLabel = Instruction.Create(OpCodes.Nop);
+        // Top notification via the scene-serialized DebugLog UILabel (y=530 = top of screen,
+        // parent Panel always active; the GO itself starts inactive, only the debug key
+        // sequence ever turns it on, and nothing ever turns it off)
+        var lblSameLabel = Instruction.Create(OpCodes.Nop);
         var lblSkipOrig = Instruction.Create(OpCodes.Nop);
-        var lblFallback = Instruction.Create(OpCodes.Nop);
+        var lblPromptBar = Instruction.Create(OpCodes.Nop);
 
-        // if (F10NotifLabel == null) { find + cache }
+        // if (F10NotifLabel != this.DebugLog) F10NotifOriginal = null; (scene reload: resave)
         seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
-        seq.Add(Instruction.Create(OpCodes.Brtrue, lblHaveLabel));
-        seq.Add(Instruction.Create(OpCodes.Ldstr, "Bug Warning Label"));
-        seq.Add(Instruction.Create(OpCodes.Call, objFind));
-        seq.Add(Instruction.Create(OpCodes.Brfalse, lblFallback));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, getComponentStr));
-        seq.Add(Instruction.Create(OpCodes.Castclass, lblTypeRef));
-        seq.Add(Instruction.Create(OpCodes.Brfalse, lblFallback));
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, dbgLogField));
+        seq.Add(Instruction.Create(OpCodes.Ceq));
+        seq.Add(Instruction.Create(OpCodes.Brtrue, lblSameLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldnull));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifOrig));
+        seq.Add(lblSameLabel);
+
+        // F10NotifLabel = this.DebugLog; (always read from the live instance)
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, dbgLogField));
         seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifLabel));
 
-        // if (F10NotifOriginal == null) F10NotifOriginal = F10NotifLabel.text;
-        seq.Add(lblHaveLabel);
+        // if (F10NotifLabel == null) -> bottom PromptBar fallback (brfalse pops its value)
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Brfalse, lblPromptBar));
+        // diagnostic: readable in Player.log
+        seq.Add(Instruction.Create(OpCodes.Ldstr, "YsPerf F10: top label (DebugLog) OK"));
+        seq.Add(Instruction.Create(OpCodes.Call, debugLog));
+
+        // if (F10NotifOriginal == null) { save original text + active state }
         seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifOrig));
         seq.Add(Instruction.Create(OpCodes.Brtrue, lblSkipOrig));
         seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
         seq.Add(Instruction.Create(OpCodes.Callvirt, getText));
         seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifOrig));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, getGameObject));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, getActiveSelf));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifWasActive));
         seq.Add(lblSkipOrig);
+
+        // F10NotifLabel.gameObject.SetActive(true)
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, getGameObject));
+        seq.Add(Instruction.Create(OpCodes.Ldc_I4_1));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, setAct));
 
         // F10NotifLabel.text = "Low Spec Preset Applied!";
         seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
@@ -755,8 +770,10 @@ sealed class Patcher
         seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifTimer));
         seq.Add(Instruction.Create(OpCodes.Br, orig));
 
-        // Fallback: bottom PromptBar if the top label could not be found
-        seq.Add(lblFallback);
+        // Fallback: bottom PromptBar if the top label is missing (stack is clean here)
+        seq.Add(lblPromptBar);
+        seq.Add(Instruction.Create(OpCodes.Ldstr, "YsPerf F10: NewTitleScreenScript.DebugLog label is null"));
+        seq.Add(Instruction.Create(OpCodes.Call, debugLog));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
         seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
         seq.Add(Instruction.Create(OpCodes.Brfalse, orig));
