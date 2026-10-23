@@ -6,7 +6,7 @@ rate on weaker hardware. No content is removed, no gameplay logic is rewritten,
 and saves keep working.
 
 The injector finds your game folder, backs up the original file as
-`Assembly-CSharp.dll.orig`, and applies twelve independent patch groups.
+`Assembly-CSharp.dll.orig`, and applies thirteen independent patch groups.
 Running it a second time changes nothing, and the restore switch puts the
 original file back at any time.
 
@@ -41,6 +41,7 @@ both links are at the bottom of this page.
 | 10 | The first run of the game sets draw distance to 200 instead of 350 | Less geometry to render each frame, the setting stays adjustable up to 350 |
 | 11 | Bloom and ambient occlusion settings from the options screen are applied on level start | The original never reloaded the post processing profile, so the options silently did nothing in some scenes |
 | 12 | Discord Rich Presence now sends a session start time | The Discord profile shows a running playtime timer |
+| 13 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and the title bar confirms with Low Spec Preset Applied |
 
 Groups 3 through 8 only write their value when the corresponding setting does
 not exist yet, so an existing profile is never overwritten. Everything else
@@ -141,8 +142,11 @@ the file, which is the moment to stop and report it.
 
 ## Settings worth checking in game
 
-First time players get the defaults from groups 3 through 8 automatically. If
-you already have a profile, set these by hand for the same effect:
+First time players get the defaults from groups 3 through 8 automatically.
+Existing profiles do not need to set anything by hand: press F10 on the main
+menu once, the title bar confirms with Low Spec Preset Applied, and the table
+below shows what changes. Every value stays adjustable in the options screen
+afterwards:
 
 | Setting | Value |
 |---------|-------|

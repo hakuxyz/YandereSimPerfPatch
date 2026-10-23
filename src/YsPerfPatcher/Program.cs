@@ -90,13 +90,14 @@ sealed class Patcher
         bool t4 = PatchDrawDistance(qm);
         bool t5 = PatchProfileSync(qm);
         PatchDiscordTimestamps();
+        PatchTitleLowSpecKey();
 
         Console.WriteLine("=== YsPerfPatcher ===");
         foreach (var l in _applied) Console.WriteLine($"  [APPLIED] {l}");
         foreach (var l in _skipped) Console.WriteLine($"  [already] {l}");
 
         int appliedCount = _applied.Count;
-        int expected = 2 + GetterDefaults().Length + 4; // throttle(2) + getters(6) + shadows + drawdist + profile + timestamps
+        int expected = 2 + GetterDefaults().Length + 5; // throttle(2) + getters(6) + shadows + drawdist + profile + timestamps + F10 key
 
         if (appliedCount == 0)
         {
@@ -651,6 +652,144 @@ sealed class Patcher
         if (body.MaxStackSize < 4) body.MaxStackSize = 4;
 
         _applied.Add("DiscordRPC.UpdateActivity sets Activity.Timestamps.Start (elapsed timer, cached once)");
+        return true;
+    }
+
+    // ---------- patch 13: NewTitleScreenScript F10 low spec key ----------
+
+    bool PatchTitleLowSpecKey()
+    {
+        var t = RequireType("NewTitleScreenScript");
+        var m = t.Methods.FirstOrDefault(x => x.Name == "Update" && x.Parameters.Count == 0);
+        if (m == null) throw new Exception("NewTitleScreenScript.Update not found");
+        if (!m.HasBody) throw new Exception("NewTitleScreenScript.Update has no body");
+        if (m.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr && (i.Operand as string) == "f10"))
+        {
+            _skipped.Add("NewTitleScreenScript.Update F10 low spec key");
+            return false;
+        }
+
+        var instrs = m.Body.Instructions;
+
+        // steal member refs from this method (or module), the game already calls all of them
+        MethodReference? getKey = null, setInt = null, save = null, setText = null;
+
+        foreach (var i in instrs)
+        {
+            if ((i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt) && i.Operand is MethodReference mr)
+            {
+                if (mr.Name == "GetKeyDown" && mr.DeclaringType.FullName == "UnityEngine.Input"
+                    && mr.Parameters.Count == 1 && mr.Parameters[0].ParameterType.FullName == "System.String")
+                    getKey ??= mr;
+                else if (mr.Name == "SetInt" && mr.DeclaringType.FullName == "UnityEngine.PlayerPrefs")
+                    setInt ??= mr;
+            }
+        }
+
+        // refs not used in this method: scan the whole module (same trick as PlayerPrefs.Save)
+        foreach (var tt in _module.Types)
+        foreach (var mm in tt.Methods)
+        {
+            if (!mm.HasBody) continue;
+            foreach (var ii in mm.Body.Instructions)
+            {
+                if (ii.OpCode != OpCodes.Call && ii.OpCode != OpCodes.Callvirt) continue;
+                if (ii.Operand is not MethodReference mr) continue;
+                if (save == null && mr.FullName == "System.Void UnityEngine.PlayerPrefs::Save()") save = mr;
+                else if (setText == null && mr.Name == "set_text" && mr.Parameters.Count == 1
+                    && mr.Parameters[0].ParameterType.FullName == "System.String"
+                    && mr.DeclaringType.Name == "UILabel") setText = mr;
+            }
+        }
+
+        var pbField = t.Fields.FirstOrDefault(f => f.Name == "PromptBar" && f.FieldType.Name == "PromptBarScript");
+        var pbType = pbField?.FieldType.Resolve();
+        var mClear = pbType?.Methods.FirstOrDefault(x => x.Name == "ClearButtons");
+        var mUpdate = pbType?.Methods.FirstOrDefault(x => x.Name == "UpdateButtons");
+        var fLabel = pbType?.Fields.FirstOrDefault(f => f.Name == "Label" && f.FieldType.IsArray);
+        var fShow = pbType?.Fields.FirstOrDefault(f => f.Name == "Show" && f.FieldType.FullName == "System.Boolean");
+
+        var missing = new List<string>();
+        if (getKey == null) missing.Add("GetKeyDown");
+        if (setInt == null) missing.Add("SetInt");
+        if (save == null) missing.Add("Save");
+        if (setText == null) missing.Add("UILabel.set_text");
+        if (pbField == null) missing.Add("NewTitleScreenScript.PromptBar");
+        if (mClear == null) missing.Add("PromptBarScript.ClearButtons");
+        if (mUpdate == null) missing.Add("PromptBarScript.UpdateButtons");
+        if (fLabel == null) missing.Add("PromptBarScript.Label");
+        if (fShow == null) missing.Add("PromptBarScript.Show");
+        if (missing.Count > 0)
+            throw new Exception("member refs not found: " + string.Join(", ", missing));
+
+        // vanilla OptionGlobals getters build every option key as "Profile_0_<name>"
+        // (ldc.i4.0 in Assembly-CSharp.dll.orig): options are global, not per save
+        (string Key, int Value)[] values =
+        {
+            ("Profile_0_Vsync", 1),
+            ("Profile_0_FPSIndex", 2),
+            ("Profile_0_DisableBloom", 1),
+            ("Profile_0_DisableObscurance", 1),
+            ("Profile_0_ParticleCount", 2),
+            ("Profile_0_LowDetailStudents", 2),
+            ("Profile_0_DrawDistance", 200),
+            ("Profile_0_EnableShadows", 0),
+            ("Profile_0_MotionBlur", 0),
+            ("Profile_0_DepthOfField", 0),
+            ("Profile_0_DisablePostAliasing", 0),
+            ("Profile_0_RimLight", 0),
+            ("Profile_0_Fog", 0),
+            ("Profile_0_DisableFarAnimations", 1),
+            ("Profile_0_ToggleGrass", 0),
+            ("Profile_0_DisableMirrors", 1),
+            ("Profile_0_DisableOutlines", 1),
+            ("Profile_0_OpaqueWindows", 1),
+            ("Profile_0_ColorGrading", 0),
+        };
+
+        var body = m.Body;
+        var il = body.GetILProcessor();
+        var orig = body.Instructions[0];
+
+        var seq = new List<Instruction>
+        {
+            Instruction.Create(OpCodes.Ldstr, "f10"),
+            Instruction.Create(OpCodes.Call, getKey),
+            Instruction.Create(OpCodes.Brfalse, orig),
+        };
+        foreach (var (key, v) in values)
+        {
+            seq.Add(Instruction.Create(OpCodes.Ldstr, key));
+            seq.Add(Instruction.Create(OpCodes.Ldc_I4, v));
+            seq.Add(Instruction.Create(OpCodes.Call, setInt));
+        }
+        seq.Add(Instruction.Create(OpCodes.Call, save));
+
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Brfalse, orig));
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, mClear));
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, fLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+        seq.Add(Instruction.Create(OpCodes.Ldelem_Ref));
+        seq.Add(Instruction.Create(OpCodes.Ldstr, "Low Spec Preset Applied"));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, setText));
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, mUpdate));
+        seq.Add(Instruction.Create(OpCodes.Ldarg_0));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Ldc_I4_1));
+        seq.Add(Instruction.Create(OpCodes.Stfld, fShow));
+
+        foreach (var i in seq) il.InsertBefore(orig, i);
+        if (body.MaxStackSize < 4) body.MaxStackSize = 4;
+
+        _applied.Add("NewTitleScreenScript.Update F10 writes low spec preset to Profile_0_* (global options) + prompt bar feedback");
         return true;
     }
 
