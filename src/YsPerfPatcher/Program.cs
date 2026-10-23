@@ -36,7 +36,7 @@ static class Program
     }
 }
 
-sealed class Patcher
+public sealed class Patcher
 {
     readonly string _path;
     readonly string _dir;

@@ -25,6 +25,27 @@ and no telemetry.
 If something does not work, ask in the Discord or watch the video guide,
 both links are at the bottom of this page.
 
+## Launcher (easiest way)
+
+If you prefer buttons over the terminal, grab the launcher instead. It is a
+small window, matte black, no extras. Pick your game folder once, then:
+
+- **Patch** backs up the original DLL and applies the patch
+- **Restore** puts the original back
+- **Launch Game** starts the game the same way the scripts do
+- **Download Game** fetches the official zip from yanderesimulator.com
+- **Discord / YouTube / GitHub** links sit at the top
+
+The status dot tells you the state: gray vanilla, green patched, red no game
+found. The log box at the bottom shows every step, same messages as the
+command line tool. The chosen folder is remembered for the next start.
+
+The launcher needs no .NET installation either. Download
+`YsPerfLauncher-win-x64.zip` or `YsPerfLauncher-linux-x64.zip` from the
+releases page, extract it, run `YsPerfLauncher.exe` on Windows or
+`./YsPerfLauncher` on Linux. The command line injector below stays available
+and does the same job, so pick whichever you like.
+
 ## What the patch changes
 
 | # | Change | Why it helps |
@@ -185,6 +206,14 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 The injector scripts live in `injector/` and expect the patcher binary next to
 them.
+
+The launcher is an Avalonia app that calls the same patcher code in process:
+
+```bash
+cd src/YsPerfLauncher
+dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/linux
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/win
+```
 
 ## Getting help
 
