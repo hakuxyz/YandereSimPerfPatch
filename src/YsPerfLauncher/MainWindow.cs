@@ -17,6 +17,9 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Ellipse = Avalonia.Controls.Shapes.Ellipse;
+using Line = Avalonia.Controls.Shapes.Line;
+using Polygon = Avalonia.Controls.Shapes.Polygon;
+using Polyline = Avalonia.Controls.Shapes.Polyline;
 
 namespace YsPerfLauncher;
 
@@ -57,6 +60,40 @@ public class MainWindow : Window
 
     readonly ProgressBar _progress = new() { Minimum = 0, Maximum = 100, Height = 6, IsVisible = false };
 
+    readonly TextBlock _dlStats = new()
+    {
+        Text = "",
+        Foreground = new SolidColorBrush(Fg),
+        FontFamily = new FontFamily("Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace"),
+        FontSize = 12,
+        IsVisible = false,
+    };
+
+    readonly Border _graphBorder = new()
+    {
+        Background = new SolidColorBrush(Color.Parse("#101013")),
+        BorderBrush = new SolidColorBrush(CtrlBorder),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(4),
+        Height = 72,
+        IsVisible = false,
+    };
+
+    readonly Canvas _graphCanvas = new() { ClipToBounds = true };
+    readonly Polygon _graphArea = new() { Fill = new SolidColorBrush(Green, 0.15) };
+    readonly Line _graphMid = new() { Stroke = new SolidColorBrush(Color.Parse("#1E1E22")), StrokeThickness = 1 };
+    readonly Polyline _graphLine = new() { Stroke = new SolidColorBrush(Green), StrokeThickness = 1.5 };
+
+    readonly DispatcherTimer _dlTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    readonly Queue<double> _dlSamples = new();
+    long _dlBytes;
+    long _dlTotal = -1;
+    double _dlSpeed;
+    double _lastBytes;
+    DateTime _lastTick;
+    double _graphW;
+    double _graphH;
+
     readonly TextBox _logBox = new()
     {
         IsReadOnly = true,
@@ -85,6 +122,20 @@ public class MainWindow : Window
         _btnLaunch = MakeButton("Launch Game", OnLaunchClicked);
         _btnDownload = MakeButton("Download Game", OnDownloadClicked);
 
+        _graphBorder.Child = _graphCanvas;
+        _graphCanvas.Children.Add(_graphArea);
+        _graphCanvas.Children.Add(_graphMid);
+        _graphCanvas.Children.Add(_graphLine);
+        _graphCanvas.SizeChanged += (_, e) =>
+        {
+            _graphW = e.NewSize.Width;
+            _graphH = e.NewSize.Height;
+            _graphMid.StartPoint = new Point(0, _graphH / 2);
+            _graphMid.EndPoint = new Point(_graphW, _graphH / 2);
+            RedrawGraph();
+        };
+        _dlTimer.Tick += OnDownloadTick;
+
         var root = new DockPanel { Margin = new Thickness(16) };
 
         var header = BuildHeader();
@@ -107,6 +158,8 @@ public class MainWindow : Window
         main.Children.Add(BuildFolderRow());
         main.Children.Add(BuildStatusRow());
         main.Children.Add(BuildActionsRow());
+        main.Children.Add(_dlStats);
+        main.Children.Add(_graphBorder);
         root.Children.Add(main);
 
         Content = root;
@@ -135,6 +188,7 @@ public class MainWindow : Window
         {
             Orientation = Orientation.Horizontal,
             Spacing = 14,
+            Margin = new Thickness(40, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
         links.Children.Add(MakeLink("Discord", DiscordUrl));
@@ -504,6 +558,7 @@ public class MainWindow : Window
         SetBusy(true);
         _progress.IsVisible = true;
         _progress.Value = 0;
+        StartDownloadStats();
         Log($"Downloading {GameUrl} ...");
 
         var zipPath = Path.Combine(_gameDir, "latest.zip");
@@ -512,37 +567,41 @@ public class MainWindow : Window
 
         try
         {
-            using var resp = await client.GetAsync(GameUrl, HttpCompletionOption.ResponseHeadersRead);
-            resp.EnsureSuccessStatusCode();
-            var total = resp.Content.Headers.ContentLength ?? -1L;
-
-            await using var input = await resp.Content.ReadAsStreamAsync();
-            await using var output = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, true);
-
-            var buffer = new byte[1 << 20];
-            long read = 0;
-            int n;
-            var lastPct = -1;
-            while ((n = await input.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            using (var resp = await client.GetAsync(GameUrl, HttpCompletionOption.ResponseHeadersRead))
             {
-                await output.WriteAsync(buffer, 0, n);
-                read += n;
-                if (total > 0)
+                resp.EnsureSuccessStatusCode();
+                var total = resp.Content.Headers.ContentLength ?? -1L;
+                _dlTotal = total;
+                if (total <= 0) _progress.IsIndeterminate = true;
+
+                await using var input = await resp.Content.ReadAsStreamAsync();
+                await using (var output = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, true))
                 {
-                    var pct = (int)(read * 100 / total);
-                    if (pct != lastPct)
+                    var buffer = new byte[1 << 20];
+                    long read = 0;
+                    int n;
+                    var lastPct = -1;
+                    while ((n = await input.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
-                        lastPct = pct;
-                        var r = read;
-                        var t = total;
-                        Dispatcher.UIThread.Post(() =>
+                        await output.WriteAsync(buffer, 0, n);
+                        read += n;
+                        _dlBytes = read;
+                        if (total > 0)
                         {
-                            _progress.Value = pct;
-                        });
+                            var pct = (int)Math.Min(100, read * 100 / total);
+                            if (pct != lastPct)
+                            {
+                                lastPct = pct;
+                                _progress.Value = pct;
+                            }
+                        }
                     }
                 }
             }
 
+            _dlTimer.Stop();
+            _graphBorder.IsVisible = false;
+            _dlStats.Text = "Extracting...";
             _progress.IsIndeterminate = true;
             Log("Download finished, extracting...");
             await Task.Run(() => ZipFile.ExtractToDirectory(zipPath, _gameDir, overwriteFiles: true));
@@ -580,11 +639,99 @@ public class MainWindow : Window
         finally
         {
             client.Dispose();
+            StopDownloadStats();
             _progress.IsVisible = false;
             _progress.IsIndeterminate = false;
             SetBusy(false);
             RefreshStatus();
         }
+    }
+
+    void StartDownloadStats()
+    {
+        _dlBytes = 0;
+        _dlTotal = -1;
+        _dlSpeed = 0;
+        _lastBytes = 0;
+        _lastTick = DateTime.UtcNow;
+        _dlSamples.Clear();
+        _graphLine.Points = new List<Point>();
+        _graphArea.Points = new List<Point>();
+        _dlStats.Text = "";
+        _dlStats.IsVisible = true;
+        _graphBorder.IsVisible = true;
+        _dlTimer.Start();
+    }
+
+    void StopDownloadStats()
+    {
+        _dlTimer.Stop();
+        _dlStats.IsVisible = false;
+        _graphBorder.IsVisible = false;
+    }
+
+    void OnDownloadTick(object? sender, EventArgs e)
+    {
+        long bytes = _dlBytes;
+        var now = DateTime.UtcNow;
+        double dt = Math.Max(0.1, (now - _lastTick).TotalSeconds);
+        _lastTick = now;
+        double instant = Math.Max(0, bytes - _lastBytes) / dt;
+        _lastBytes = bytes;
+
+        _dlSamples.Enqueue(instant);
+        while (_dlSamples.Count > 90) _dlSamples.Dequeue();
+
+        _dlSpeed = _dlSpeed <= 0 ? instant : _dlSpeed * 0.5 + instant * 0.5;
+
+        _dlStats.Text = FormatDownloadStats(bytes);
+        RedrawGraph();
+    }
+
+    string FormatDownloadStats(long bytes)
+    {
+        const double mb = 1048576.0;
+        if (_dlTotal <= 0)
+            return $"{bytes / mb:F1} MB · {_dlSpeed / mb:F1} MB/s";
+
+        int pct = (int)Math.Min(100, bytes * 100 / _dlTotal);
+        var eta = "--:--";
+        if (_dlSpeed > 64 * 1024)
+        {
+            var rem = TimeSpan.FromSeconds((_dlTotal - bytes) / _dlSpeed);
+            eta = rem.TotalHours >= 1
+                ? rem.ToString(@"h\:mm\:ss")
+                : rem.ToString(@"m\:ss");
+        }
+        return $"{pct}% · {bytes / mb:F1} / {_dlTotal / mb:F1} MB · {_dlSpeed / mb:F1} MB/s · ~{eta} left";
+    }
+
+    void RedrawGraph()
+    {
+        double w = _graphW, h = _graphH;
+        var arr = _dlSamples.ToArray();
+        int n = arr.Length;
+        if (n < 2 || w < 8 || h < 8) return;
+
+        double maxSpeed = 0;
+        foreach (var s in arr) maxSpeed = Math.Max(maxSpeed, s);
+        double scale = Math.Max(maxSpeed, 256 * 1024.0) * 1.15;
+
+        var pts = new List<Point>();
+        for (int i = 0; i < n; i++)
+        {
+            double x = i * (w - 1) / (n - 1);
+            double y = h - 1 - (arr[i] / scale) * (h - 2);
+            pts.Add(new Point(x, y));
+        }
+
+        var area = new List<Point>();
+        foreach (var p in pts) area.Add(p);
+        area.Add(new Point(pts[n - 1].X, h));
+        area.Add(new Point(pts[0].X, h));
+
+        _graphArea.Points = area;
+        _graphLine.Points = pts;
     }
 
     void SetBusy(bool busy)
