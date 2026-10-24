@@ -151,8 +151,18 @@ public class MainWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
         };
-        DockPanel.SetDock(logBorder, Dock.Bottom);
-        root.Children.Add(logBorder);
+
+        var clearItem = new MenuItem { Header = "Clear" };
+        clearItem.Click += (_, _) => _logBox.Text = "";
+        _logBox.ContextMenu = new ContextMenu { ItemsSource = new object[] { clearItem } };
+
+        var splitter = new Border
+        {
+            Height = 6,
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.SizeNorthSouth),
+        };
+        splitter.PointerEntered += (_, _) => splitter.Background = new SolidColorBrush(CtrlBorder);
 
         var main = new StackPanel { Spacing = 12, Margin = new Thickness(0, 4, 0, 8) };
         main.Children.Add(BuildFolderRow());
@@ -160,7 +170,45 @@ public class MainWindow : Window
         main.Children.Add(BuildActionsRow());
         main.Children.Add(_dlStats);
         main.Children.Add(_graphBorder);
-        root.Children.Add(main);
+
+        var logRow = new RowDefinition(new GridLength(150));
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition(new GridLength(1, GridUnitType.Star)));
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        grid.RowDefinitions.Add(logRow);
+
+        Grid.SetRow(main, 0);
+        grid.Children.Add(main);
+        Grid.SetRow(splitter, 1);
+        grid.Children.Add(splitter);
+        Grid.SetRow(logBorder, 2);
+        grid.Children.Add(logBorder);
+        root.Children.Add(grid);
+
+        bool dragging = false;
+        double startY = 0, startH = 150;
+        splitter.PointerPressed += (_, e) =>
+        {
+            dragging = true;
+            startY = e.GetPosition(this).Y;
+            startH = logRow.Height.Value;
+            e.Pointer.Capture(splitter);
+            e.Handled = true;
+        };
+        splitter.PointerReleased += (_, e) =>
+        {
+            dragging = false;
+            e.Pointer.Capture(null);
+            splitter.Background = Brushes.Transparent;
+        };
+        splitter.PointerExited += (_, _) => { if (!dragging) splitter.Background = Brushes.Transparent; };
+        splitter.PointerMoved += (_, e) =>
+        {
+            if (!dragging) return;
+            var dy = startY - e.GetPosition(this).Y;
+            var max = Math.Max(80, Bounds.Height - 200);
+            logRow.Height = new GridLength(Math.Clamp(startH + dy, 48, max));
+        };
 
         Content = root;
 
