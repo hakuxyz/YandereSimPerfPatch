@@ -506,9 +506,6 @@ public class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(_gameDir)) { Log("Set the game folder first."); return; }
 
-        var bashScript = Path.Combine(_gameDir, "start-mangohud.sh");
-        if (File.Exists(bashScript)) { LaunchScript(bashScript); return; }
-
         var shScript = Path.Combine(_gameDir, "start.sh");
         if (File.Exists(shScript)) { LaunchScript(shScript); return; }
 
