@@ -181,6 +181,21 @@ patcher is built for the current official build (Unity 6000.2.8f1). Older
 builds have different code shapes and make it exit with code 3 without touching
 the file, which is the moment to stop and report it.
 
+## If the patcher refuses to patch
+
+Every failure mode below leaves your `Assembly-CSharp.dll` untouched: the
+patcher only writes after all groups succeeded, so it can never leave a
+half-patched file behind. The game keeps starting either way.
+
+| Group | What a game update changes | Player sees | Safety class | What to do |
+|---|---|---|---|---|
+| Low spec key (F10) | `NewTitleScreenScript.Update` changes shape, or the `DebugLog` / `PromptBar` fields move | `PATCH ABORTED (file untouched): ...` in the log, launcher stops with code 3. Game starts normally, DLL untouched | Safe by design | Re-run after a game update; if it still fails, update the patcher or report the build mismatch |
+| First launch defaults | The `OptionGlobals` getters are renamed or change body shape | `layout incompatible ... OptionGlobals.get_Vsync (0 params)` or `get_<prop>: key-build sequence not found`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run when the game updates; if the getter names changed, the patcher needs an update |
+| Bloom/AO profile sync | `QualityManagerScript.Start` changes, or the `Yandere -> PauseScreen -> NewSettings -> Profile` field chain moves | `anchor (call OptionGlobals::get_MotionBlur) not found in QualityManagerScript.Start` or `expected ldfld ... near anchor`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run after the game patch; the sync needs a new anchor |
+| Draw distance | The `350` initialization before `set_DrawDistance` is no longer there | `DrawDistance initialization (ldc.i4 350; call set_DrawDistance) not found in QualityManagerScript.Start`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run after a game update; if the method layout changed, the patcher needs an update |
+| Discord timestamps | `DiscordRPC.UpdateActivity` or the `Discord.Activity` layout (`Assets`, `Timestamps`, `State`) changes | `anchor (ldflda Discord.Activity::Assets) not found in DiscordRPC.UpdateActivity` or a related anchor message, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched; worst case Discord shows no elapsed timer | Safe by design | Update the patcher after a game update; harmless to the game itself |
+| Hard shadows | The shadow code no longer matches the scan pattern | No error: `shadows Soft->Hard (no Soft sites found)` and the summary reads `Summary: 10/11 patch groups applied.` Game starts and runs, shadows keep vanilla behavior | Silent degradation | Nothing urgent; update the patcher if you want the shadow optimization |
+
 ## Settings worth checking in game
 
 First time players get the defaults from groups 3 through 8 automatically.
