@@ -64,7 +64,29 @@ public static class BackupManager
             return false;
         }
 
-        var manifest = TryReadManifest(dllPath);
+        // a manifest that exists but cannot be read fails closed:
+        // never restore from an unverified backup when metadata is present but broken.
+        // installs predating the manifest (no .backup.json file at all) still restore.
+        BackupBundle? manifest = null;
+        string manifestPath = ManifestPathFor(dllPath);
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                manifest = JsonSerializer.Deserialize<BackupBundle>(File.ReadAllText(manifestPath));
+            }
+            catch (Exception ex)
+            {
+                message = $"Manifest invalid ({ex.GetType().Name}): {manifestPath}";
+                return false;
+            }
+            if (manifest == null)
+            {
+                message = $"Manifest invalid (empty): {manifestPath}";
+                return false;
+            }
+        }
+
         string origMd5 = Md5Of(File.ReadAllBytes(orig));
         if (manifest != null && manifest.Md5Original != origMd5)
         {
@@ -79,8 +101,24 @@ public static class BackupManager
 
     public static string DescribeStatus(string dllPath)
     {
-        var manifest = TryReadManifest(dllPath);
         string current = File.Exists(dllPath) ? Md5Of(File.ReadAllBytes(dllPath)) : "?";
+        string manifestPath = ManifestPathFor(dllPath);
+        BackupBundle? manifest = null;
+        bool manifestBroken = false;
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                manifest = JsonSerializer.Deserialize<BackupBundle>(File.ReadAllText(manifestPath));
+                manifestBroken = manifest == null;
+            }
+            catch
+            {
+                manifestBroken = true;
+            }
+        }
+        if (manifestBroken)
+            return $"Patch manifest present but unreadable. Current md5: {current}";
         if (manifest == null)
             return $"No patch manifest. Current md5: {current}";
         return $"Patched by YsPerfPatcher {manifest.PatcherVersion} at {manifest.TimestampUtc} "

@@ -11,6 +11,12 @@ public sealed class GameBuildProfile
     public IReadOnlyList<string> RequiredTypes { get; }
     public IReadOnlyDictionary<string, string[]> RequiredMembers { get; }
 
+    /// <summary>"Type.Member" -> expected parameter count; checked when present.</summary>
+    public IReadOnlyDictionary<string, int> RequiredMethodParamCounts { get; }
+
+    /// <summary>"Type.Member" -> expected field type name; checked when present.</summary>
+    public IReadOnlyDictionary<string, string> RequiredFieldTypeNames { get; }
+
     public IReadOnlyList<OptionSetting> FirstRunDefaults { get; }
     public IReadOnlyList<PresetKey> LowSpecPreset { get; }
 
@@ -43,6 +49,27 @@ public sealed class GameBuildProfile
             },
             ["DiscordRPC"] = new[] { "UpdateActivity" },
             ["NewTitleScreenScript"] = new[] { "Update", "DebugLog", "PromptBar" },
+        };
+
+        // name-only matches can hide signature changes in a new game build;
+        // pin the shapes the patch groups actually bind against
+        RequiredMethodParamCounts = new Dictionary<string, int>
+        {
+            ["OptionGlobals.get_Vsync"] = 0,
+            ["OptionGlobals.get_DisableBloom"] = 0,
+            ["OptionGlobals.get_DisableObscurance"] = 0,
+            ["OptionGlobals.get_FPSIndex"] = 0,
+            ["OptionGlobals.get_ParticleCount"] = 0,
+            ["OptionGlobals.get_LowDetailStudents"] = 0,
+            ["QualityManagerScript.Start"] = 0,
+            ["DiscordRPC.UpdateActivity"] = 0,
+            ["NewTitleScreenScript.Update"] = 0,
+        };
+
+        RequiredFieldTypeNames = new Dictionary<string, string>
+        {
+            ["NewTitleScreenScript.DebugLog"] = "UILabel",
+            ["NewTitleScreenScript.PromptBar"] = "PromptBarScript",
         };
 
         // vanilla OptionGlobals getters build every option key as "Profile_N_<name>";
@@ -106,6 +133,30 @@ public sealed class GameBuildProfile
             }
         }
 
+        foreach (var (key, paramCount) in RequiredMethodParamCounts)
+        {
+            var (typeName, memberName) = SplitKey(key);
+            var type = inspector.FindType(typeName);
+            if (type == null) continue;
+            if (!type.Methods.Any(m => m.Name == memberName && m.Parameters.Count == paramCount))
+                missing.Add($"{key} ({paramCount} params)");
+        }
+
+        foreach (var (key, fieldTypeName) in RequiredFieldTypeNames)
+        {
+            var (typeName, memberName) = SplitKey(key);
+            var type = inspector.FindType(typeName);
+            if (type == null) continue;
+            if (!type.Fields.Any(f => f.Name == memberName && f.FieldType.Name == fieldTypeName))
+                missing.Add($"{key} ({fieldTypeName})");
+        }
+
         return missing;
+    }
+
+    static (string Type, string Member) SplitKey(string key)
+    {
+        int dot = key.IndexOf('.');
+        return dot < 0 ? (key, "") : (key[..dot], key[(dot + 1)..]);
     }
 }

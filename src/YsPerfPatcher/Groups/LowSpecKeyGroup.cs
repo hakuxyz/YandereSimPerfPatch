@@ -9,6 +9,25 @@ public sealed class LowSpecKeyGroup : PatchGroup
     public override IReadOnlyList<string> TargetTypes => new[] { "NewTitleScreenScript" };
     public override IReadOnlyList<string> RequiredMembers => new[] { "Update", "DebugLog", "PromptBar" };
 
+    sealed record Refs(
+        MethodReference GetKey,
+        MethodReference SetInt,
+        MethodReference Save,
+        MethodReference SetText,
+        MethodReference GetText,
+        MethodReference GetTimeDelta,
+        MethodReference DebugLog,
+        MethodReference GetGameObject,
+        MethodReference GetActiveSelf,
+        MethodReference SetActive,
+        MethodReference ObjectInequality,
+        FieldDefinition DbgLogField,
+        FieldDefinition PbField,
+        MethodDefinition PbClear,
+        MethodDefinition PbUpdate,
+        FieldDefinition PbLabel,
+        FieldDefinition PbShow);
+
     public override bool CanApply(PatchContext ctx, out string skipReason)
     {
         var t = ctx.Inspector.RequireType("NewTitleScreenScript");
@@ -29,11 +48,38 @@ public sealed class LowSpecKeyGroup : PatchGroup
         var module = inspector.Module;
         var t = inspector.RequireType("NewTitleScreenScript");
         var m = inspector.RequireMethod(t, "Update", 0);
-        var instrs = m.Body.Instructions;
 
+        var refs = ResolveRefs(inspector, t, m);
+        var notif = AddNotificationStateFields(t, refs.SetText);
+        var seq = BuildSequence(refs, notif, ctx.Profile.LowSpecPreset, m.Body.Instructions[0]);
+
+        var body = m.Body;
+        var il = body.GetILProcessor();
+        var orig = body.Instructions[0];
+        foreach (var i in seq) il.InsertBefore(orig, i);
+        if (body.MaxStackSize < 8) body.MaxStackSize = 8;
+
+        ctx.ReportApplied("NewTitleScreenScript.Update F10 writes low spec preset to Profile_0_* (global options) + top notification");
+    }
+
+    public override void Validate(PatchContext ctx)
+    {
+        var t = ctx.Inspector.RequireType("NewTitleScreenScript");
+        var m = ctx.Inspector.RequireMethod(t, "Update", 0);
+        if (!m.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr && (i.Operand as string) == "f10"))
+            throw new Exception("validate: F10 key marker missing after apply");
+        foreach (var f in new[] { "F10NotifTimer", "F10NotifOriginal", "F10NotifLabel", "F10NotifWasActive" })
+            if (ctx.Inspector.FindField(t, f) == null)
+                throw new Exception($"validate: {f} field missing after apply");
+    }
+
+    // ---------- internals ----------
+
+    static Refs ResolveRefs(AssemblyInspector inspector, TypeDefinition t, MethodDefinition m)
+    {
         // steal member refs from this method (or module), the game already calls all of them
         MethodReference? getKey = null, setInt = null;
-        foreach (var i in instrs)
+        foreach (var i in m.Body.Instructions)
         {
             if ((i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt) && i.Operand is MethodReference mr)
             {
@@ -93,6 +139,16 @@ public sealed class LowSpecKeyGroup : PatchGroup
         if (!fLabel.FieldType.IsArray) throw new Exception("PromptBarScript.Label is not an array");
         var fShow = inspector.RequireField(pbType, "Show", "Boolean");
 
+        return new Refs(getKey, setInt, save, setText, getText, getTimeDelta, debugLog,
+            getGameObject, getActiveSelf, setAct, objInequality,
+            dbgLogField, pbField, mClear, mUpdate, fLabel, fShow);
+    }
+
+    static (FieldDefinition Timer, FieldDefinition Original, FieldDefinition Label, FieldDefinition WasActive)
+        AddNotificationStateFields(TypeDefinition t, MethodReference setText)
+    {
+        var module = t.Module;
+
         // static state for the top notification (timer + cached label + original text)
         var lblTypeRef = (TypeReference)setText.DeclaringType;
         var fNotifTimer = new FieldDefinition("F10NotifTimer", FieldAttributes.Static | FieldAttributes.Private, module.TypeSystem.Single);
@@ -103,11 +159,13 @@ public sealed class LowSpecKeyGroup : PatchGroup
         t.Fields.Add(fNotifOrig);
         t.Fields.Add(fNotifLabel);
         t.Fields.Add(fNotifWasActive);
+        return (fNotifTimer, fNotifOrig, fNotifLabel, fNotifWasActive);
+    }
 
-        var body = m.Body;
-        var il = body.GetILProcessor();
-        var orig = body.Instructions[0];
-
+    static List<Instruction> BuildSequence(Refs r,
+        (FieldDefinition Timer, FieldDefinition Original, FieldDefinition Label, FieldDefinition WasActive) n,
+        IReadOnlyList<PresetKey> preset, Instruction orig)
+    {
         // branch targets for the every-frame timer countdown
         var lblDecrement = Instruction.Create(OpCodes.Nop);
         var lblContinue = Instruction.Create(OpCodes.Nop);
@@ -115,56 +173,56 @@ public sealed class LowSpecKeyGroup : PatchGroup
         var seq = new List<Instruction>
         {
             // --- every frame: notification timer countdown + restore ---
-            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Ldsfld, n.Timer),
             Instruction.Create(OpCodes.Ldc_R4, 0f),
             Instruction.Create(OpCodes.Bgt_Un, lblDecrement),
             Instruction.Create(OpCodes.Br, lblContinue),
 
             lblDecrement,
-            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
-            Instruction.Create(OpCodes.Call, getTimeDelta),
+            Instruction.Create(OpCodes.Ldsfld, n.Timer),
+            Instruction.Create(OpCodes.Call, r.GetTimeDelta),
             Instruction.Create(OpCodes.Sub),
-            Instruction.Create(OpCodes.Stsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Stsfld, n.Timer),
 
-            Instruction.Create(OpCodes.Ldsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Ldsfld, n.Timer),
             Instruction.Create(OpCodes.Ldc_R4, 0f),
             Instruction.Create(OpCodes.Bgt, lblContinue),
             Instruction.Create(OpCodes.Ldc_R4, 0f),
-            Instruction.Create(OpCodes.Stsfld, fNotifTimer),
+            Instruction.Create(OpCodes.Stsfld, n.Timer),
 
             // Unity-aware: destroyed objects must compare == null
-            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
+            Instruction.Create(OpCodes.Ldsfld, n.Label),
             Instruction.Create(OpCodes.Ldnull),
-            Instruction.Create(OpCodes.Call, objInequality),
+            Instruction.Create(OpCodes.Call, r.ObjectInequality),
             Instruction.Create(OpCodes.Brfalse, lblContinue),
-            Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
+            Instruction.Create(OpCodes.Ldsfld, n.Original),
             Instruction.Create(OpCodes.Brfalse, lblContinue),
 
-            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
-            Instruction.Create(OpCodes.Ldsfld, fNotifOrig),
-            Instruction.Create(OpCodes.Callvirt, setText),
-            Instruction.Create(OpCodes.Ldsfld, fNotifLabel),
-            Instruction.Create(OpCodes.Callvirt, getGameObject),
-            Instruction.Create(OpCodes.Ldsfld, fNotifWasActive),
-            Instruction.Create(OpCodes.Callvirt, setAct),
+            Instruction.Create(OpCodes.Ldsfld, n.Label),
+            Instruction.Create(OpCodes.Ldsfld, n.Original),
+            Instruction.Create(OpCodes.Callvirt, r.SetText),
+            Instruction.Create(OpCodes.Ldsfld, n.Label),
+            Instruction.Create(OpCodes.Callvirt, r.GetGameObject),
+            Instruction.Create(OpCodes.Ldsfld, n.WasActive),
+            Instruction.Create(OpCodes.Callvirt, r.SetActive),
             Instruction.Create(OpCodes.Ldnull),
-            Instruction.Create(OpCodes.Stsfld, fNotifOrig),
+            Instruction.Create(OpCodes.Stsfld, n.Original),
 
             lblContinue,
 
             // --- F10 key check ---
             Instruction.Create(OpCodes.Ldstr, "f10"),
-            Instruction.Create(OpCodes.Call, getKey),
+            Instruction.Create(OpCodes.Call, r.GetKey),
             Instruction.Create(OpCodes.Brfalse, orig),
         };
 
-        foreach (var (key, v) in ctx.Profile.LowSpecPreset)
+        foreach (var (key, v) in preset)
         {
             seq.Add(Instruction.Create(OpCodes.Ldstr, key));
             seq.Add(Instruction.Create(OpCodes.Ldc_I4, v));
-            seq.Add(Instruction.Create(OpCodes.Call, setInt));
+            seq.Add(Instruction.Create(OpCodes.Call, r.SetInt));
         }
-        seq.Add(Instruction.Create(OpCodes.Call, save));
+        seq.Add(Instruction.Create(OpCodes.Call, r.Save));
 
         // Top notification via the scene-serialized DebugLog UILabel (y=530 = top of screen,
         // parent Panel always active; the GO itself starts inactive, only the debug key
@@ -174,87 +232,73 @@ public sealed class LowSpecKeyGroup : PatchGroup
         var lblPromptBar = Instruction.Create(OpCodes.Nop);
 
         // if (F10NotifLabel != this.DebugLog) F10NotifOriginal = null; (scene reload: resave)
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, dbgLogField));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.DbgLogField));
         seq.Add(Instruction.Create(OpCodes.Ceq));
         seq.Add(Instruction.Create(OpCodes.Brtrue, lblSameLabel));
         seq.Add(Instruction.Create(OpCodes.Ldnull));
-        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifOrig));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, n.Original));
         seq.Add(lblSameLabel);
 
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, dbgLogField));
-        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.DbgLogField));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, n.Label));
 
         // brfalse pops its value
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
         seq.Add(Instruction.Create(OpCodes.Brfalse, lblPromptBar));
         seq.Add(Instruction.Create(OpCodes.Ldstr, "YsPerf F10: top label (DebugLog) OK"));
-        seq.Add(Instruction.Create(OpCodes.Call, debugLog));
+        seq.Add(Instruction.Create(OpCodes.Call, r.DebugLog));
 
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifOrig));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Original));
         seq.Add(Instruction.Create(OpCodes.Brtrue, lblSkipOrig));
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, getText));
-        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifOrig));
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, getGameObject));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, getActiveSelf));
-        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifWasActive));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.GetText));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, n.Original));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.GetGameObject));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.GetActiveSelf));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, n.WasActive));
         seq.Add(lblSkipOrig);
 
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, getGameObject));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.GetGameObject));
         seq.Add(Instruction.Create(OpCodes.Ldc_I4_1));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, setAct));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.SetActive));
 
-        seq.Add(Instruction.Create(OpCodes.Ldsfld, fNotifLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldsfld, n.Label));
         seq.Add(Instruction.Create(OpCodes.Ldstr, "Low Spec Preset Applied!"));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, setText));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.SetText));
         seq.Add(Instruction.Create(OpCodes.Ldc_R4, 4f));
-        seq.Add(Instruction.Create(OpCodes.Stsfld, fNotifTimer));
+        seq.Add(Instruction.Create(OpCodes.Stsfld, n.Timer));
         seq.Add(Instruction.Create(OpCodes.Br, orig));
 
         // Fallback: bottom PromptBar if the top label is missing (stack is clean here)
         seq.Add(lblPromptBar);
         seq.Add(Instruction.Create(OpCodes.Ldstr, "YsPerf F10: NewTitleScreenScript.DebugLog label is null"));
-        seq.Add(Instruction.Create(OpCodes.Call, debugLog));
+        seq.Add(Instruction.Create(OpCodes.Call, r.DebugLog));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbField));
         seq.Add(Instruction.Create(OpCodes.Brfalse, orig));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, mClear));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbField));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.PbClear));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, fLabel));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbField));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbLabel));
         seq.Add(Instruction.Create(OpCodes.Ldc_I4_0));
         seq.Add(Instruction.Create(OpCodes.Ldelem_Ref));
         seq.Add(Instruction.Create(OpCodes.Ldstr, "Low Spec Preset Applied"));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, setText));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.SetText));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
-        seq.Add(Instruction.Create(OpCodes.Callvirt, mUpdate));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbField));
+        seq.Add(Instruction.Create(OpCodes.Callvirt, r.PbUpdate));
         seq.Add(Instruction.Create(OpCodes.Ldarg_0));
-        seq.Add(Instruction.Create(OpCodes.Ldfld, pbField));
+        seq.Add(Instruction.Create(OpCodes.Ldfld, r.PbField));
         seq.Add(Instruction.Create(OpCodes.Ldc_I4_1));
-        seq.Add(Instruction.Create(OpCodes.Stfld, fShow));
+        seq.Add(Instruction.Create(OpCodes.Stfld, r.PbShow));
 
-        foreach (var i in seq) il.InsertBefore(orig, i);
-        if (body.MaxStackSize < 8) body.MaxStackSize = 8;
-
-        ctx.ReportApplied("NewTitleScreenScript.Update F10 writes low spec preset to Profile_0_* (global options) + top notification");
-    }
-
-    public override void Validate(PatchContext ctx)
-    {
-        var t = ctx.Inspector.RequireType("NewTitleScreenScript");
-        var m = ctx.Inspector.RequireMethod(t, "Update", 0);
-        if (!m.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr && (i.Operand as string) == "f10"))
-            throw new Exception("validate: F10 key marker missing after apply");
-        foreach (var f in new[] { "F10NotifTimer", "F10NotifOriginal", "F10NotifLabel", "F10NotifWasActive" })
-            if (ctx.Inspector.FindField(t, f) == null)
-                throw new Exception($"validate: {f} field missing after apply");
+        return seq;
     }
 }

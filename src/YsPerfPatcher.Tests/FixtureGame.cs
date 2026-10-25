@@ -13,12 +13,12 @@ public sealed class FixtureGame : IDisposable
     public string Dir { get; }
     public string DllPath => Path.Combine(Dir, "Assembly-CSharp.dll");
 
-    public FixtureGame(bool includeTitleScreen = true)
+    public FixtureGame(bool includeTitleScreen = true, bool breakDiscordSignature = false)
     {
         Dir = Path.Combine(Path.GetTempPath(), "yspf-fixture-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Dir);
         BuildUnityCore();
-        BuildGameAssembly(includeTitleScreen);
+        BuildGameAssembly(includeTitleScreen, breakDiscordSignature);
     }
 
     public void Dispose()
@@ -96,7 +96,7 @@ public sealed class FixtureGame : IDisposable
 
     // ---------- Assembly-CSharp.dll fixture ----------
 
-    void BuildGameAssembly(bool includeTitleScreen)
+    void BuildGameAssembly(bool includeTitleScreen, bool breakDiscordSignature)
     {
         var asm = AssemblyDefinition.CreateAssembly(
             new AssemblyNameDefinition("Assembly-CSharp", new Version(1, 0)),
@@ -249,6 +249,8 @@ public sealed class FixtureGame : IDisposable
         var discord = TypeDef("DiscordRPC");
         var upd = new MethodDefinition("UpdateActivity",
             MethodAttributes.Public | MethodAttributes.Static, m.TypeSystem.Void);
+        if (breakDiscordSignature)
+            upd.Parameters.Add(new ParameterDefinition(m.TypeSystem.Int32)); // wrong shape on purpose
         discord.Methods.Add(upd);
         {
             var body = upd.Body;

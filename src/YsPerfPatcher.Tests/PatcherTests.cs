@@ -216,4 +216,145 @@ public class PatcherTests
         Assert.False(BackupManager.Restore(fx.DllPath, out var message));
         Assert.Contains("No backup found", message);
     }
+
+    // ---------- negative paths ----------
+
+    [Fact]
+    public void Restore_FailsClosed_OnInvalidManifest()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+        File.WriteAllText(fx.DllPath + ".backup.json", "{ not json");
+
+        Assert.False(BackupManager.Restore(fx.DllPath, out var message));
+        Assert.Contains("Manifest invalid", message);
+    }
+
+    [Fact]
+    public void Restore_Fails_OnTamperedOrig()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+        File.WriteAllBytes(fx.DllPath + ".orig", new byte[] { 1, 2, 3 });
+
+        Assert.False(BackupManager.Restore(fx.DllPath, out var message));
+        Assert.Contains("Backup validation failed", message);
+    }
+
+    [Fact]
+    public void Restore_Works_WithoutManifest()
+    {
+        using var fx = new FixtureGame();
+        byte[] original = File.ReadAllBytes(fx.DllPath);
+        RunPatcher(fx.DllPath);
+        File.Delete(fx.DllPath + ".backup.json"); // pre-1.1.0 install shape
+
+        Assert.True(BackupManager.Restore(fx.DllPath, out var message), message);
+        Assert.Equal(original, File.ReadAllBytes(fx.DllPath));
+    }
+
+    [Fact]
+    public void PartialPatch_AppliesOnlyRemainingGroups()
+    {
+        using var fx = new FixtureGame();
+
+        // simulate a half-patched state: draw distance already 200, rest vanilla
+        using (var asm = Open(fx.DllPath))
+        {
+            var qm = asm.MainModule.GetType("QualityManagerScript");
+            var start = qm.Methods.First(m => m.Name == "Start");
+            var instrs = start.Body.Instructions;
+            for (int i = 1; i < instrs.Count; i++)
+            {
+                if (instrs[i].OpCode == OpCodes.Call && instrs[i].Operand is MethodReference mr
+                    && mr.Name == "set_DrawDistance")
+                {
+                    Assert.Equal(350, instrs[i - 1].Operand);
+                    instrs[i - 1].Operand = 200;
+                }
+            }
+            asm.Write(fx.DllPath);
+        }
+
+        var (rc, output) = RunPatcher(fx.DllPath);
+        Assert.Equal(0, rc);
+        Assert.Contains("Summary: 10/11 patch groups applied.", output);
+        Assert.Contains("[already] QualityManagerScript.Start DrawDistance = 200", output);
+    }
+
+    [Fact]
+    public void CorruptedAssembly_Throws()
+    {
+        using var fx = new FixtureGame();
+        File.WriteAllBytes(fx.DllPath, new byte[] { 0xDE, 0xAD, 0xBE, 0xEF });
+        Assert.ThrowsAny<Exception>(() => RunPatcher(fx.DllPath));
+    }
+
+    [Fact]
+    public void SignatureMismatch_AbortsWithParamCount()
+    {
+        using var fx = new FixtureGame(breakDiscordSignature: true);
+        var ex = Assert.Throws<Exception>(() => RunPatcher(fx.DllPath));
+        Assert.Contains("layout incompatible", ex.Message);
+        Assert.Contains("DiscordRPC.UpdateActivity (0 params)", ex.Message);
+    }
+
+    [Fact]
+    public void Status_ReportsUnreadableManifest()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+        File.WriteAllText(fx.DllPath + ".backup.json", "{ not json");
+
+        Assert.Contains("unreadable", BackupManager.DescribeStatus(fx.DllPath));
+    }
+
+    [Fact]
+    public void FindExistingField_FindsDeclaredFields()
+    {
+        using var fx = new FixtureGame();
+        var inspector = new AssemblyInspector(fx.DllPath);
+
+        Assert.NotNull(inspector.FindExistingField(fr => fr.Name == "Yandere"));
+        Assert.Null(inspector.FindExistingField(fr => fr.Name == "__no_such_field__"));
+        var label = inspector.RequireExistingField(fr => fr.Name == "DebugLog", "DebugLog");
+        Assert.Equal("DebugLog", label.Name);
+    }
+
+    // ---------- CLI return codes ----------
+
+    static int RunCli(string[] args)
+    {
+        var sw = new StringWriter();
+        var old = Console.Out;
+        Console.SetOut(sw);
+        try
+        {
+            return Program.Main(args);
+        }
+        finally
+        {
+            Console.SetOut(old);
+        }
+    }
+
+    [Fact]
+    public void Cli_Version_Returns0()
+    {
+        Assert.Equal(0, RunCli(new[] { "--version" }));
+    }
+
+    [Fact]
+    public void Cli_MissingFile_Returns1()
+    {
+        Assert.Equal(1, RunCli(new[] { Path.Combine(Path.GetTempPath(), "no-such-yspf.dll") }));
+    }
+
+    [Fact]
+    public void Cli_IncompatibleLayout_Returns3()
+    {
+        using var fx = new FixtureGame(includeTitleScreen: false);
+        Assert.Equal(3, RunCli(new[] { fx.DllPath }));
+        Assert.Equal(3, RunCli(new[] { "--dry-run", fx.DllPath }));
+    }
 }

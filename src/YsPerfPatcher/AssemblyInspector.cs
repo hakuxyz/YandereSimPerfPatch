@@ -105,4 +105,32 @@ public sealed class AssemblyInspector
     public MethodReference RequireExistingCall(Func<MethodReference, bool> predicate, string description)
         => FindExistingCall(predicate)
             ?? throw new Exception($"existing {description} member ref not found in game assembly");
+
+    /// <summary>
+    /// Finds an existing field reference anywhere in the game module.
+    /// Same principle as FindExistingCall: reuse the game's own refs instead
+    /// of hand-building MemberRefs that Unity's mono rejects.
+    /// </summary>
+    public FieldReference? FindExistingField(Func<FieldReference, bool> predicate)
+    {
+        foreach (var type in Module.GetTypes())
+        {
+            foreach (var field in type.Fields)
+                if (predicate(field)) return field;
+
+            foreach (var method in type.Methods)
+            {
+                if (!method.HasBody) continue;
+                foreach (var instr in method.Body.Instructions)
+                {
+                    if (instr.Operand is FieldReference fr && predicate(fr)) return fr;
+                }
+            }
+        }
+        return null;
+    }
+
+    public FieldReference RequireExistingField(Func<FieldReference, bool> predicate, string description)
+        => FindExistingField(predicate)
+            ?? throw new Exception($"existing {description} field ref not found in game assembly");
 }

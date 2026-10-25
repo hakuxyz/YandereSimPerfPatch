@@ -2,9 +2,9 @@
 using System.IO;
 using YsPerfPatcher;
 
-static class Program
+public static class Program
 {
-    static int Main(string[] args)
+    public static int Main(string[] args)
     {
         if (args.Length == 0)
             return Usage();
