@@ -66,6 +66,28 @@ Groups 1 through 6 only write their value when the corresponding setting does
 not exist yet, so an existing profile is never overwritten. Everything else
 checks its own marker and skips when the DLL was already patched.
 
+## Architecture
+
+The patcher is split into small pieces instead of one mutation script:
+
+| Piece | Job |
+|-------|-----|
+| `AssemblyInspector` | Type, method and field discovery (`FindType`, `FindMethod`, `FindField`) plus reuse of member references the game already contains |
+| `GameBuildProfile` | Declares the expected assembly layout and the option values; incompatible DLLs abort before any write |
+| `PatchGroup` classes | One class per patch group with target types, required members, a `CanApply` safety check, `Apply` and a post-apply `Validate` |
+| `BackupManager` | Keeps the vanilla DLL as `.orig` plus a `.backup.json` manifest with MD5, timestamp, patcher version and applied groups; `--restore` validates before writing back |
+
+The launcher calls the same code in process (`new Patcher(dll, dir).Run()`),
+so the GUI and the CLI always produce the same result. The CLI also has
+`--dry-run`, `--restore`, `--status` and `--version`.
+
+Tests build a tiny fixture assembly with Mono.Cecil that mirrors the IL shapes
+the patcher anchors on, then verify every group and the backup flow:
+
+```bash
+dotnet test src/YsPerfPatcher.Tests
+```
+
 ## Install on Windows
 
 1. Download `YandereSimPerfPatch-win-x64.zip` from the releases page.

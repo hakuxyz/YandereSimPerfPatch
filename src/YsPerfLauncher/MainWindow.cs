@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using YsPerfPatcher;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
