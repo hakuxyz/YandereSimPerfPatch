@@ -55,6 +55,28 @@ public static class BackupManager
         }
     }
 
+    /// <summary>
+    /// Catches well-formed JSON that does not actually describe a backup:
+    /// wrong property names, hand-edited fields, partial writes. Returns null
+    /// when the manifest is complete enough to trust for validation.
+    /// </summary>
+    public static string? ValidateStructure(BackupBundle manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Md5Original)
+            || manifest.Md5Original.Length != 32
+            || !manifest.Md5Original.All(Uri.IsHexDigit))
+            return "Md5Original missing or not a 32-char md5";
+        if (string.IsNullOrWhiteSpace(manifest.PatcherVersion))
+            return "PatcherVersion missing";
+        if (string.IsNullOrWhiteSpace(manifest.TimestampUtc))
+            return "TimestampUtc missing";
+        if (string.IsNullOrWhiteSpace(manifest.OrigPath))
+            return "OrigPath missing";
+        if (manifest.AppliedGroups == null)
+            return "AppliedGroups missing";
+        return null;
+    }
+
     public static bool Restore(string dllPath, out string message)
     {
         string orig = OrigPathFor(dllPath);
@@ -83,6 +105,12 @@ public static class BackupManager
             if (manifest == null)
             {
                 message = $"Manifest invalid (empty): {manifestPath}";
+                return false;
+            }
+            var structureError = ValidateStructure(manifest);
+            if (structureError != null)
+            {
+                message = $"Manifest invalid ({structureError}): {manifestPath}";
                 return false;
             }
         }
@@ -119,6 +147,8 @@ public static class BackupManager
         }
         if (manifestBroken)
             return $"Patch manifest present but unreadable. Current md5: {current}";
+        if (manifest != null && ValidateStructure(manifest) != null)
+            return $"Patch manifest present but incomplete. Current md5: {current}";
         if (manifest == null)
             return $"No patch manifest. Current md5: {current}";
         return $"Patched by YsPerfPatcher {manifest.PatcherVersion} at {manifest.TimestampUtc} "

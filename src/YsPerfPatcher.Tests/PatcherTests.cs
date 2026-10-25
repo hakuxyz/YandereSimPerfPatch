@@ -254,6 +254,39 @@ public class PatcherTests
     }
 
     [Fact]
+    public void Restore_FailsClosed_OnStructurallyInvalidManifest()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+        string realMd5 = BackupManager.TryReadManifest(fx.DllPath)!.Md5Original;
+
+        // well-formed JSON, correct md5, but missing required fields
+        File.WriteAllText(fx.DllPath + ".backup.json",
+            $"{{\"Md5Original\": \"{realMd5}\"}}");
+        Assert.False(BackupManager.Restore(fx.DllPath, out var msg1));
+        Assert.Contains("Manifest invalid", msg1);
+        Assert.Contains("PatcherVersion missing", msg1);
+
+        // well-formed JSON, wrong property names entirely
+        File.WriteAllText(fx.DllPath + ".backup.json", "{\"foo\": \"bar\"}");
+        Assert.False(BackupManager.Restore(fx.DllPath, out var msg2));
+        Assert.Contains("Manifest invalid", msg2);
+        Assert.Contains("Md5Original", msg2);
+        Assert.Contains("incomplete", BackupManager.DescribeStatus(fx.DllPath));
+    }
+
+    [Fact]
+    public void Restore_Fails_WhenOrigMissingButManifestPresent()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+        File.Delete(fx.DllPath + ".orig");
+
+        Assert.False(BackupManager.Restore(fx.DllPath, out var message));
+        Assert.Contains("No backup found", message);
+    }
+
+    [Fact]
     public void PartialPatch_AppliesOnlyRemainingGroups()
     {
         using var fx = new FixtureGame();
