@@ -1,3 +1,5 @@
+using Mono.Cecil;
+
 namespace YsPerfPatcher;
 
 public sealed record OptionSetting(string PropertyName, int DefaultValue, string KeyPrefix);
@@ -70,6 +72,9 @@ public sealed class GameBuildProfile
         {
             ["NewTitleScreenScript.DebugLog"] = "UILabel",
             ["NewTitleScreenScript.PromptBar"] = "PromptBarScript",
+            // PromptBarScript shapes the F10 fallback writes through
+            ["PromptBarScript.Show"] = "Boolean",
+            ["PromptBarScript.Label"] = "UILabel[]",
         };
 
         // vanilla OptionGlobals getters build every option key as "Profile_N_<name>";
@@ -147,11 +152,19 @@ public sealed class GameBuildProfile
             var (typeName, memberName) = SplitKey(key);
             var type = inspector.FindType(typeName);
             if (type == null) continue;
-            if (!type.Fields.Any(f => f.Name == memberName && f.FieldType.Name == fieldTypeName))
+            if (!type.Fields.Any(f => f.Name == memberName && FieldTypeMatches(f.FieldType, fieldTypeName)))
                 missing.Add($"{key} ({fieldTypeName})");
         }
 
         return missing;
+    }
+
+    static bool FieldTypeMatches(TypeReference actual, string expected)
+    {
+        if (expected.EndsWith("[]", StringComparison.Ordinal))
+            return actual is ArrayType arr
+                && arr.ElementType.Name == expected[..^2];
+        return actual.Name == expected;
     }
 
     static (string Type, string Member) SplitKey(string key)

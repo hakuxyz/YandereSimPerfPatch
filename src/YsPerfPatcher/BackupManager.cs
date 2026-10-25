@@ -113,6 +113,12 @@ public static class BackupManager
                 message = $"Manifest invalid ({structureError}): {manifestPath}";
                 return false;
             }
+            if (!string.Equals(Path.GetFullPath(manifest.OrigPath), Path.GetFullPath(orig),
+                    StringComparison.Ordinal))
+            {
+                message = $"Manifest invalid (OrigPath {manifest.OrigPath} does not match {orig}): {manifestPath}";
+                return false;
+            }
         }
 
         string origMd5 = Md5Of(File.ReadAllBytes(orig));

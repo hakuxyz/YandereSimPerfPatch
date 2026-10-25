@@ -287,6 +287,34 @@ public class PatcherTests
     }
 
     [Fact]
+    public void Restore_Fails_OnOrigPathMismatch()
+    {
+        using var fx = new FixtureGame();
+        RunPatcher(fx.DllPath);
+
+        // a manifest copied over from another install: right shape, wrong backup location
+        var manifest = BackupManager.TryReadManifest(fx.DllPath)!;
+        string edited = System.Text.Json.JsonSerializer.Serialize(manifest with
+        {
+            OrigPath = "/somewhere/else/Assembly-CSharp.dll.orig",
+        });
+        File.WriteAllText(fx.DllPath + ".backup.json", edited);
+
+        Assert.False(BackupManager.Restore(fx.DllPath, out var message));
+        Assert.Contains("OrigPath", message);
+        Assert.Contains("does not match", message);
+    }
+
+    [Fact]
+    public void PromptBarLabelShapeMismatch_AbortsPreflight()
+    {
+        using var fx = new FixtureGame(breakPromptBarLabel: true);
+        var ex = Assert.Throws<Exception>(() => RunPatcher(fx.DllPath));
+        Assert.Contains("layout incompatible", ex.Message);
+        Assert.Contains("PromptBarScript.Label (UILabel[])", ex.Message);
+    }
+
+    [Fact]
     public void PartialPatch_AppliesOnlyRemainingGroups()
     {
         using var fx = new FixtureGame();

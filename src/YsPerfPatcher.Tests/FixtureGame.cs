@@ -13,12 +13,13 @@ public sealed class FixtureGame : IDisposable
     public string Dir { get; }
     public string DllPath => Path.Combine(Dir, "Assembly-CSharp.dll");
 
-    public FixtureGame(bool includeTitleScreen = true, bool breakDiscordSignature = false)
+    public FixtureGame(bool includeTitleScreen = true, bool breakDiscordSignature = false,
+        bool breakPromptBarLabel = false)
     {
         Dir = Path.Combine(Path.GetTempPath(), "yspf-fixture-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Dir);
         BuildUnityCore();
-        BuildGameAssembly(includeTitleScreen, breakDiscordSignature);
+        BuildGameAssembly(includeTitleScreen, breakDiscordSignature, breakPromptBarLabel);
     }
 
     public void Dispose()
@@ -96,7 +97,7 @@ public sealed class FixtureGame : IDisposable
 
     // ---------- Assembly-CSharp.dll fixture ----------
 
-    void BuildGameAssembly(bool includeTitleScreen, bool breakDiscordSignature)
+    void BuildGameAssembly(bool includeTitleScreen, bool breakDiscordSignature, bool breakPromptBarLabel)
     {
         var asm = AssemblyDefinition.CreateAssembly(
             new AssemblyNameDefinition("Assembly-CSharp", new Version(1, 0)),
@@ -292,7 +293,9 @@ public sealed class FixtureGame : IDisposable
         if (includeTitleScreen)
         {
             var pb = TypeDef("PromptBarScript");
-            FieldDef(pb, "Label", new ArrayType(m.TypeSystem.String));
+            FieldDef(pb, "Label", breakPromptBarLabel
+                ? new ArrayType(m.TypeSystem.String)   // wrong element type on purpose
+                : new ArrayType(CoreType("UILabel")));
             FieldDef(pb, "Show", m.TypeSystem.Boolean);
             InstanceMethod(pb, "ClearButtons", m.TypeSystem.Void, il => il.Append(Instruction.Create(OpCodes.Ret)));
             InstanceMethod(pb, "UpdateButtons", m.TypeSystem.Void, il => il.Append(Instruction.Create(OpCodes.Ret)));
