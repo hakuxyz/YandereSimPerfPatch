@@ -4,7 +4,7 @@ YandereSimPerfPatch patches a standalone `Assembly-CSharp.dll`. It is not tied t
 
 ## GameHub
 
-GameHub is a PC emulator for Android (gamehub.xiajio.com). The community has asked about running Yandere Simulator on Android through GameHub, and a GameHub-compatible release is being explored as a separate build category.
+GameHub is a PC emulator for Android (gamehub.xiaoji.com). You have a test machine, so this can be verified directly. The community has asked about running Yandere Simulator on Android through GameHub, and a GameHub-compatible release is being explored as a separate build category.
 
 This is not part of the PC patcher releases, and it is not yet available. When it lands, it will live here as its own category with its own install steps, so PC users and Android users never patch the wrong build.
 
