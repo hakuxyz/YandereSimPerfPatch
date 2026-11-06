@@ -1,238 +1,56 @@
 # YandereSimPerfPatch
 
-A patcher for the current Windows build of Yandere Simulator. It edits
-`Assembly-CSharp.dll` in place so the game keeps a higher and steadier frame
-rate on weaker hardware. No content is removed, no gameplay logic is rewritten,
-and saves keep working.
+A patcher for the current Windows build of Yandere Simulator. It edits `Assembly-CSharp.dll` in place so the game keeps a higher and steadier frame rate on weaker hardware. No content is removed, no gameplay logic is rewritten, and saves keep working.
 
-The injector finds your game folder, backs up the original file as
-`Assembly-CSharp.dll.orig`, and applies eleven independent patch groups.
-Running it a second time changes nothing, and the restore switch puts the
-original file back at any time.
+Eleven independent patch groups. The injector backs up the original file as `Assembly-CSharp.dll.orig` and applies them. Running it twice changes nothing, and the restore switch puts the original file back at any time.
 
-Both binaries are self contained, so no .NET installation is required. The
-patcher itself only rewrites the DLL and can be used on Windows and on Linux.
-The game then runs the way it always did, either natively or through Wine.
+## What it does
 
-## Before you start
+- Higher and steadier frame rate on weaker hardware
+- Safe low graphics defaults on first launch: bloom, ambient occlusion, and high shadows start off
+- No online changes, no account, no telemetry
+- Full source in this repository; anyone can read, change, and check what it does to the game
 
-You do not need any programming knowledge for this. Download the zip for your
-system, extract it, run one file, done. The whole thing is open source, the
-full code lives in this repository and everyone can read it, change it, and
-check what it does to the game. It changes nothing online, there is no account
-and no telemetry.
+The game then runs exactly the way you start it today, natively or through Wine.
 
-If something does not work, ask in the Discord or watch the video guide,
-both links are at the bottom of this page.
+## Quick start
+
+You do not need any programming knowledge. Download the zip for your system, extract it, run one file, done.
+
+1. Download `YandereSimPerfPatch-win-x64.zip` or `YandereSimPerfPatch-linux-x64.zip` from the Releases page.
+2. Extract it into one folder. Keep the injector script and `YsPerfPatcher` together.
+3. Close Yandere Simulator. The game locks its DLL while it runs, and the injector refuses to touch a locked file.
+4. Run the injector:
+   - Windows: double click `inject.bat`
+   - Linux: `./inject.sh` (make it executable with `chmod +x` first)
+5. Start the game. The first launch applies the safe defaults from the patch.
+
+The console shows the game folder it found and the patch summary, for example `Summary: 11/11 patch groups applied.`
 
 ## Launcher (easiest way)
 
-If you prefer buttons over the terminal, grab the launcher instead. It is a
-small window, matte black, no extras. Pick your game folder once, then:
+If you prefer buttons over the terminal, grab `YsPerfLauncher`. Pick your game folder once, then:
 
 - **Patch** backs up the original DLL and applies the patch
 - **Restore** puts the original back
-- **Launch Game** starts the game the same way the scripts do
-- **Download Game** fetches the official zip from yanderesimulator.com
+- **Launch Game** starts the game the same way the injector scripts do
+- **Download Game** fetches the official zip from yanderesimulator.com and extracts it into the chosen folder
 - **Discord / YouTube / GitHub** links sit at the top
+- A status dot shows the state: gray vanilla, green patched, red no game found
+- A log box shows every step, the same messages as the command line tool
+- The chosen folder is remembered between starts
 
-The status dot tells you the state: gray vanilla, green patched, red no game
-found. The log box at the bottom shows every step, same messages as the
-command line tool. The chosen folder is remembered for the next start.
+## Documentation
 
-The launcher needs no .NET installation either. Download
-`YsPerfLauncher-win-x64.zip` or `YsPerfLauncher-linux-x64.zip` from the
-releases page, extract it, run `YsPerfLauncher.exe` on Windows or
-`./YsPerfLauncher` on Linux. The command line injector below stays available
-and does the same job, so pick whichever you like.
-
-## What the patch changes
-
-| # | Change | Why it helps |
-|---|--------|--------------|
-| 1 | First launch defaults to VSync on | Avoids screen tearing without extra work |
-| 2 | First launch defaults to bloom off | Removes a full screen shader pass |
-| 3 | First launch defaults to ambient occlusion off | Removes a second full screen pass |
-| 4 | First launch defaults to a 60 FPS limit | Uncapped frame rates stutter on older GPUs |
-| 5 | First launch defaults to particle count low | Fewer particles during rain, dust, and crowd scenes |
-| 6 | First launch defaults to low detail students at 20 meters | Distant students use the simple model |
-| 7 | Soft shadows become hard shadows everywhere | Roughly half the shadow shader cost, only matters when shadows are on (they start off) |
-| 8 | The first run of the game sets draw distance to 200 instead of 350 | Less geometry to render each frame, the setting stays adjustable up to 350 |
-| 9 | Bloom and ambient occlusion settings from the options screen are applied on level start | The original never reloaded the post processing profile, so the options silently did nothing in some scenes |
-| 10 | Discord Rich Presence now sends a session start time | The Discord profile shows a running playtime timer |
-| 11 | Press F10 on the title screen to write the full low spec preset into the options | One key press gives an existing profile the same values first time players get, and a notification at the top of the screen confirms with Low Spec Preset Applied |
-
-Groups 1 through 6 only write their value when the corresponding setting does
-not exist yet, so an existing profile is never overwritten. Everything else
-checks its own marker and skips when the DLL was already patched.
-
-## Architecture
-
-The patcher is split into small pieces instead of one mutation script:
-
-| Piece | Job |
-|-------|-----|
-| `AssemblyInspector` | Type, method and field discovery (`FindType`, `FindMethod`, `FindField`) plus reuse of member references the game already contains |
-| `GameBuildProfile` | Declares the expected assembly layout and the option values; incompatible DLLs abort before any write |
-| `PatchGroup` classes | One class per patch group with target types, required members, a `CanApply` safety check, `Apply` and a post-apply `Validate` |
-| `BackupManager` | Keeps the vanilla DLL as `.orig` plus a `.backup.json` manifest with MD5, timestamp, patcher version and applied groups; `--restore` validates before writing back |
-
-The launcher calls the same code in process (`new Patcher(dll, dir).Run()`),
-so the GUI and the CLI always produce the same result. The CLI also has
-`--dry-run`, `--restore`, `--status` and `--version`.
-
-Tests build a tiny fixture assembly with Mono.Cecil that mirrors the IL shapes
-the patcher anchors on, then verify every group and the backup flow:
-
-```bash
-dotnet test src/YsPerfPatcher.Tests
-```
-
-## Install on Windows
-
-1. Download `YandereSimPerfPatch-win-x64.zip` from the releases page.
-2. Extract it anywhere, keep the files together.
-3. Close Yandere Simulator, Windows locks the DLL while the game runs.
-4. Double click `inject.bat`.
-5. The injector prints the game folder it found and the patch summary.
-
-If the search comes up empty, start it with the folder that contains
-`YandereSimulator.exe`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\inject.ps1 -GamePath "D:\Games\YandereSimulator"
-```
-
-The full Windows documentation, including the list of searched folders and
-troubleshooting, is in [docs/WINDOWS.md](docs/WINDOWS.md).
-
-## Install on Linux
-
-1. Download `YandereSimPerfPatch-linux-x64.zip` from the releases page.
-2. Extract it, then make the two files executable:
-
-```bash
-chmod +x inject.sh YsPerfPatcher
-```
-
-3. Run the injector:
-
-```bash
-./inject.sh
-```
-
-4. It searches common locations, prints the DLL it found, and patches it.
-
-When the search misses, pass the game folder yourself:
-
-```bash
-./inject.sh "$HOME/Games/YandereSimulator"
-```
-
-Or set the location once for future runs:
-
-```bash
-export YANDERE_SIM_PATH="$HOME/Games/YandereSimulator"
-```
-
-The full Linux documentation, including the Wine and Discord notes, is in
-[docs/LINUX.md](docs/LINUX.md).
-
-## Restore the original DLL
-
-Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Restore
-```
-
-Linux:
-
-```bash
-./inject.sh --restore
-```
-
-Both take an optional folder argument when the search would find nothing. The
-backup `Assembly-CSharp.dll.orig` sits next to the DLL and is created on the
-first patch run.
-
-## Updates
-
-Every normal run of the injector checks GitHub for a newer version. When one
-is available, a desktop notification tells you and the console shows the same
-line. To update, run the injector with the update switch:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\inject.ps1 -Update
-```
-
-```bash
-./inject.sh --update
-```
-
-It downloads the newest release, replaces itself and the patcher with it, and
-patches your game right after. The check stays quiet when you are offline.
-
-## After a game update
-
-YandereDev replaces `Assembly-CSharp.dll` with every release, and the backup
-next to it may be gone. Run the injector again and it patches the new file. The
-patcher is built for the current official build (Unity 6000.2.8f1). Older
-builds have different code shapes and make it exit with code 3 without touching
-the file, which is the moment to stop and report it.
-
-## If the patcher refuses to patch
-
-Every failure mode below leaves your `Assembly-CSharp.dll` untouched: the
-patcher only writes after all groups succeeded, so it can never leave a
-half-patched file behind. The game keeps starting either way.
-
-| Group | What a game update changes | Player sees | Safety class | What to do |
-|---|---|---|---|---|
-| Low spec key (F10) | `NewTitleScreenScript.Update` changes shape, or the `DebugLog` / `PromptBar` fields move | `PATCH ABORTED (file untouched): ...` in the log, launcher stops with code 3. Game starts normally, DLL untouched | Safe by design | Re-run after a game update; if it still fails, update the patcher or report the build mismatch |
-| First launch defaults | The `OptionGlobals` getters are renamed or change body shape | `layout incompatible ... OptionGlobals.get_Vsync (0 params)` or `get_<prop>: key-build sequence not found`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run when the game updates; if the getter names changed, the patcher needs an update |
-| Bloom/AO profile sync | `QualityManagerScript.Start` changes, or the `Yandere -> PauseScreen -> NewSettings -> Profile` field chain moves | `anchor (call OptionGlobals::get_MotionBlur) not found in QualityManagerScript.Start` or `expected ldfld ... near anchor`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run after the game patch; the sync needs a new anchor |
-| Draw distance | The `350` initialization before `set_DrawDistance` is no longer there | `DrawDistance initialization (ldc.i4 350; call set_DrawDistance) not found in QualityManagerScript.Start`, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched | Safe by design | Re-run after a game update; if the method layout changed, the patcher needs an update |
-| Discord timestamps | `DiscordRPC.UpdateActivity` or the `Discord.Activity` layout (`Assets`, `Timestamps`, `State`) changes | `anchor (ldflda Discord.Activity::Assets) not found in DiscordRPC.UpdateActivity` or a related anchor message, then `PATCH ABORTED (file untouched): ...`, code 3. Game starts, DLL untouched; worst case Discord shows no elapsed timer | Safe by design | Update the patcher after a game update; harmless to the game itself |
-| Hard shadows | The shadow code no longer matches the scan pattern | No error: `shadows Soft->Hard (no Soft sites found)` and the summary reads `Summary: 10/11 patch groups applied.` Game starts and runs, shadows keep vanilla behavior | Silent degradation | Nothing urgent; update the patcher if you want the shadow optimization |
-
-## Settings worth checking in game
-
-First time players get the defaults from groups 3 through 8 automatically.
-Existing profiles do not need to set anything by hand: press F10 on the main
-menu once, a notification at the top of the screen confirms with Low Spec
-Preset Applied, and the table below shows what changes. Every value stays
-adjustable in the options screen afterwards:
-
-| Setting | Value |
-|---------|-------|
-| FPS limit | 60 |
-| VSync | on, off when your monitor runs above 60 Hz |
-| Draw distance | 200 |
-| Particles | low |
-| Low detail students | on, 20 meters |
-| Shadows | off for the highest frame rate, on now uses hard shadows |
-| Bloom, ambient occlusion | off |
-| Motion blur, depth of field | off |
-| Post anti aliasing | on, cheap and cleans up edges |
-
-The options screen also has a shortcut to the built in low spec preset: press
-lowercase `l` there and everything jumps to the lowest values.
-
-## Limits
-
-The patch targets the single player build. There is no multiplayer and no anti
-cheat to worry about, and nothing is injected at runtime, the DLL on disk is
-simply written once.
-
-Under Wine and Proton, Discord Rich Presence needs a working IPC bridge before
-the game starts and the Discord desktop client has to be running. Without both,
-only the presence entry is missing, the game runs normally. See
-[docs/LINUX.md](docs/LINUX.md).
+| File | Content |
+|------|---------|
+| [docs/WINDOWS.md](docs/WINDOWS.md) | Windows install, detection, restore, troubleshooting |
+| [docs/LINUX.md](docs/LINUX.md) | Linux install, Wine and Discord notes, troubleshooting |
+| [docs/MOBILE.md](docs/MOBILE.md) | Android, GameHub, and the mobile Yandere Simulator community |
 
 ## Build from source
 
-The patcher is a .NET 10 console application using Mono.Cecil.
+The patcher is a .NET 10 console application using Mono.Cecil:
 
 ```bash
 cd src/YsPerfPatcher
@@ -241,8 +59,7 @@ dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFil
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/win
 ```
 
-The injector scripts live in `injector/` and expect the patcher binary next to
-them.
+The injector scripts live in `injector/` and expect the patcher binary next to them.
 
 The launcher is an Avalonia app that calls the same patcher code in process:
 
@@ -252,22 +69,14 @@ dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFil
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/win
 ```
 
+No .NET installation is needed to run the result. Prebuilt zips live in the releases.
+
 ## Getting help
 
-The Discord server is the fastest place to get help, also for complete
-beginners: https://discord.gg/Qf5cgQK3Y2
+The Discord server is the fastest place to get help, also for complete beginners: https://discord.gg/Qf5cgQK3Y2
 
-There is a video guide on YouTube that shows every click:
-https://www.youtube.com/@xyzhakuu
-
-## Documentation
-
-| File | Content |
-|------|---------|
-| [docs/WINDOWS.md](docs/WINDOWS.md) | Windows install, detection, restore, troubleshooting |
-| [docs/LINUX.md](docs/LINUX.md) | Linux install, Wine and Discord notes, troubleshooting |
+There is a video guide on YouTube that shows every click: https://www.youtube.com/@xyzhakuu
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Yandere Simulator and its assets belong to
-YandereDev and are not covered by it.
+MIT, see [LICENSE](LICENSE). Yandere Simulator and its assets belong to YandereDev and are not covered by it.
